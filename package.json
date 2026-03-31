@@ -5,7 +5,9 @@
   "type": "module",
   "description": "Local Power Automate MCP server, browser extension, and installable Codex skill.",
   "mcpName": "io.github.kaael1/mcp-power-automate",
-  "bin": "./server/index.mjs",
+  "bin": {
+    "mcp-power-automate": "server/index.mjs"
+  },
   "files": [
     "assets",
     "extension",
@@ -29,7 +31,7 @@
   },
   "repository": {
     "type": "git",
-    "url": "https://github.com/kaael1/mcp-power-automate.git"
+    "url": "git+https://github.com/kaael1/mcp-power-automate.git"
   },
   "bugs": {
     "url": "https://github.com/kaael1/mcp-power-automate/issues"

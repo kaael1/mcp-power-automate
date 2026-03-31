@@ -25,6 +25,12 @@ Then publish the package:
 npm publish
 ```
 
+If npm publish is protected by 2FA for writes, publish with the current one-time code:
+
+```powershell
+npm publish --access public --otp 123456
+```
+
 Expected package:
 
 - `@kaael1/mcp-power-automate`
