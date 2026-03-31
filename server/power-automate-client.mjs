@@ -174,7 +174,7 @@ const normalizeFlow = (session, flowResponse) => {
   };
 };
 
-const normalizeFlowCatalogItem = (session, flowResponse) => {
+const normalizeFlowCatalogItem = (session, flowResponse, accessScope = 'owned') => {
   const properties = flowResponse?.properties || {};
   const definitionSummary = properties.definitionSummary || {};
 
@@ -182,11 +182,14 @@ const normalizeFlowCatalogItem = (session, flowResponse) => {
     actionTypes: Array.isArray(definitionSummary.actions)
       ? definitionSummary.actions.map((action) => action?.type).filter(Boolean)
       : [],
+    accessScope,
     createdTime: properties.createdTime || null,
+    creatorObjectId: properties.creator?.objectId || null,
     displayName: properties.displayName || flowResponse?.name || 'Untitled flow',
     envId: session.envId,
     flowId: flowResponse?.name || null,
     lastModifiedTime: properties.lastModifiedTime || null,
+    sharingType: properties.sharingType || null,
     state: properties.state || null,
     triggerTypes: Array.isArray(definitionSummary.triggers)
       ? definitionSummary.triggers.map((trigger) => trigger?.type).filter(Boolean)
@@ -327,7 +330,7 @@ const fetchRawFlowLegacy = async (session, flowId = session.flowId) => {
   });
 };
 
-const listFlowsLegacy = async (session) => {
+const queryLegacyFlows = async (session, { filter } = {}) => {
   const legacySession = getPreferredLegacySession(session);
 
   if (!legacySession) {
@@ -336,26 +339,110 @@ const listFlowsLegacy = async (session) => {
     );
   }
 
-  const response = await requestJson({
-    apiVersion: LEGACY_API_VERSION,
-    baseUrl: legacySession.baseUrl,
-    method: 'GET',
-    resourcePath: getLegacyFlowsCollectionPath(session.envId),
-    token: legacySession.token,
-  });
+  const resourcePath = getLegacyFlowsCollectionPath(session.envId);
+  const requestUrl = buildRequestUrl(legacySession.baseUrl, resourcePath, LEGACY_API_VERSION);
 
-  const flows = Array.isArray(response?.value)
-    ? response.value
-        .map((flow) => normalizeFlowCatalogItem(session, flow))
+  if (filter) {
+    requestUrl.searchParams.set('$filter', filter);
+  }
+
+  const response = await fetch(requestUrl, {
+    headers: {
+      Authorization: legacySession.token,
+      'Content-Type': 'application/json',
+    },
+    method: 'GET',
+  });
+  const parsedBody = await readResponseBody(response);
+
+  if (!response.ok) {
+    throw toApiError(response, parsedBody);
+  }
+
+  return {
+    response: parsedBody,
+    source: legacySession.source,
+  };
+};
+
+const mergeCatalogItems = (...collections) => {
+  const byFlowId = new Map();
+
+  for (const collection of collections) {
+    for (const flow of collection) {
+      const current = byFlowId.get(flow.flowId);
+
+      if (!current) {
+        byFlowId.set(flow.flowId, flow);
+        continue;
+      }
+
+      byFlowId.set(flow.flowId, {
+        ...current,
+        accessScope:
+          current.accessScope === 'owned' && flow.accessScope !== 'owned'
+            ? flow.accessScope
+            : current.accessScope,
+        creatorObjectId: current.creatorObjectId || flow.creatorObjectId || null,
+        sharingType: current.sharingType || flow.sharingType || null,
+        userType: current.userType || flow.userType || null,
+      });
+    }
+  }
+
+  return [...byFlowId.values()].sort((left, right) => left.displayName.localeCompare(right.displayName));
+};
+
+const listFlowsLegacy = async (session) => {
+  const [baseResult, sharedUserResult, portalSharedResult] = await Promise.all([
+    queryLegacyFlows(session),
+    queryLegacyFlows(session, { filter: "properties/userType eq 'User'" }).catch(() => ({
+      response: { value: [] },
+      source: null,
+    })),
+    queryLegacyFlows(session, {
+      filter: "properties/sharingType eq 'Coauthor' and properties/userType eq 'Owner'",
+    }).catch(() => ({
+      response: { value: [] },
+      source: null,
+    })),
+  ]);
+
+  const baseFlows = Array.isArray(baseResult.response?.value)
+    ? baseResult.response.value
+        .map((flow) => normalizeFlowCatalogItem(session, flow, 'owned'))
         .filter((flow) => flow.flowId)
-        .sort((left, right) => left.displayName.localeCompare(right.displayName))
     : [];
+
+  const sharedUserFlows = Array.isArray(sharedUserResult.response?.value)
+    ? sharedUserResult.response.value
+        .map((flow) => normalizeFlowCatalogItem(session, flow, 'shared-user'))
+        .filter((flow) => flow.flowId)
+    : [];
+
+  const baseFlowIds = new Set(baseFlows.map((flow) => flow.flowId));
+  const sharedUserFlowIds = new Set(sharedUserFlows.map((flow) => flow.flowId));
+  const portalSharedExtras = Array.isArray(portalSharedResult.response?.value)
+    ? portalSharedResult.response.value
+        .map((flow) => normalizeFlowCatalogItem(session, flow, 'portal-shared'))
+        .filter(
+          (flow) =>
+            flow.flowId &&
+            !baseFlowIds.has(flow.flowId) &&
+            !sharedUserFlowIds.has(flow.flowId),
+        )
+    : [];
+
+  const flows = mergeCatalogItems(baseFlows, sharedUserFlows, portalSharedExtras);
 
   const catalog = {
     capturedAt: new Date().toISOString(),
     envId: session.envId,
     flows,
-    source: legacySession.source,
+    source:
+      portalSharedResult.source ||
+      sharedUserResult.source ||
+      baseResult.source,
   };
 
   await saveFlowCatalog(catalog);

@@ -31,6 +31,7 @@ The project has three pieces:
 
 - Read the active flow from the browser-backed session
 - List flows from the current environment
+- Merge owned and shared-visible flows into one environment catalog
 - Select which flow is the active MCP target
 - Validate the active flow
 - Update the active flow
@@ -152,6 +153,7 @@ This repo keeps the skill in the same repository as the MCP on purpose so the in
 2. Open any flow in the target Power Automate environment so the extension can capture auth and environment context
 3. Ask Codex to `list_flows` and `set_active_flow`
 4. Ask Codex to:
+   - `list_flows`
    - `get_flow`
    - `validate_flow`
    - `update_flow`
@@ -163,8 +165,14 @@ This repo keeps the skill in the same repository as the MCP on purpose so the in
     - compare the selected target flow with the current tab flow
     - switch the selected target to the current tab when desired
     - refresh the latest run status
-   - review the last update summary
-   - revert the last saved change
+    - review the last update summary
+    - revert the last saved change
+
+`list_flows` now returns an `accessScope` classification per flow:
+
+- `owned`
+- `shared-user`
+- `portal-shared`
 
 ## Recommended release posture
 

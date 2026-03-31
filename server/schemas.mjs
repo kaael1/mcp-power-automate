@@ -29,11 +29,14 @@ export const flowContentSchema = z.object({
 
 export const flowCatalogItemSchema = z.object({
   actionTypes: z.array(z.string()).optional(),
+  accessScope: z.enum(['owned', 'portal-shared', 'shared-user']).optional(),
   createdTime: z.string().nullable().optional(),
+  creatorObjectId: z.string().nullable().optional(),
   displayName: z.string().trim().min(1, 'displayName is required'),
   envId: envIdSchema,
   flowId: flowIdSchema,
   lastModifiedTime: z.string().nullable().optional(),
+  sharingType: z.string().nullable().optional(),
   state: z.string().nullable().optional(),
   triggerTypes: z.array(z.string()).optional(),
   userType: z.string().nullable().optional(),

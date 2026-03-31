@@ -116,7 +116,7 @@ Steps:
   Returns a compact troubleshooting payload with current status plus cached run and update summaries.
 
 - `list_flows`
-  Lists flows in the current environment.
+  Lists flows in the current environment and includes an `accessScope` hint such as `owned`, `shared-user`, or `portal-shared`.
 
 - `refresh_flows`
   Refreshes the current environment flow catalog from Power Automate.
