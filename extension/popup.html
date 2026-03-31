@@ -1,0 +1,189 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Power Automate MCP Bridge</title>
+    <style>
+      :root {
+        color-scheme: light;
+        font-family: "Segoe UI", sans-serif;
+      }
+
+      body {
+        margin: 0;
+        min-width: 320px;
+        background: #f3f6fb;
+        color: #1f2a37;
+      }
+
+      main {
+        padding: 16px;
+      }
+
+      h1 {
+        margin: 0 0 12px;
+        font-size: 16px;
+      }
+
+      .card {
+        background: #fff;
+        border: 1px solid #d8e1ef;
+        border-radius: 10px;
+        padding: 12px;
+        box-shadow: 0 6px 18px rgba(15, 23, 42, 0.06);
+      }
+
+      .row {
+        display: flex;
+        gap: 8px;
+        justify-content: space-between;
+        font-size: 12px;
+        margin-bottom: 8px;
+      }
+
+      .row strong {
+        color: #526075;
+        font-weight: 600;
+      }
+
+      .value {
+        max-width: 180px;
+        overflow-wrap: anywhere;
+        text-align: right;
+      }
+
+      .status {
+        margin: 12px 0;
+        padding: 10px;
+        border-radius: 8px;
+        font-size: 12px;
+      }
+
+      .status.ok {
+        background: #e9f8ef;
+        color: #166534;
+      }
+
+      .status.error {
+        background: #feecec;
+        color: #b42318;
+      }
+
+      .button-row {
+        display: grid;
+        gap: 8px;
+        grid-template-columns: 1fr 1fr;
+        margin-top: 12px;
+      }
+
+      button {
+        width: 100%;
+        border: 0;
+        border-radius: 8px;
+        background: #0f6cbd;
+        color: #fff;
+        cursor: pointer;
+        font-size: 13px;
+        font-weight: 600;
+        padding: 10px 12px;
+      }
+
+      button:disabled {
+        cursor: default;
+        opacity: 0.6;
+      }
+
+      button.secondary {
+        background: #dce8f8;
+        color: #0f3f73;
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>Power Automate MCP Bridge</h1>
+      <section class="card">
+        <div class="row">
+          <strong>Bridge</strong>
+          <span class="value" id="bridge-status">Checking...</span>
+        </div>
+        <div class="row">
+          <strong>Env ID</strong>
+          <span class="value" id="env-id">-</span>
+        </div>
+        <div class="row">
+          <strong>Flow ID</strong>
+          <span class="value" id="flow-id">-</span>
+        </div>
+        <div class="row">
+          <strong>Captured</strong>
+          <span class="value" id="captured-at">-</span>
+        </div>
+        <div class="row">
+          <strong>Last sent</strong>
+          <span class="value" id="last-sent-at">-</span>
+        </div>
+        <div class="row">
+          <strong>Legacy API</strong>
+          <span class="value" id="legacy-state">-</span>
+        </div>
+        <div class="row">
+          <strong>Token source</strong>
+          <span class="value" id="token-source">-</span>
+        </div>
+        <div class="row">
+          <strong>Snapshot</strong>
+          <span class="value" id="snapshot-source">-</span>
+        </div>
+      </section>
+      <section class="card" style="margin-top: 12px">
+        <div class="row">
+          <strong>Last update</strong>
+          <span class="value" id="update-at">-</span>
+        </div>
+        <div class="row">
+          <strong>Before</strong>
+          <span class="value" id="before-name">-</span>
+        </div>
+        <div class="row">
+          <strong>After</strong>
+          <span class="value" id="after-name">-</span>
+        </div>
+        <div class="row">
+          <strong>Changed</strong>
+          <span class="value" id="changed-state">-</span>
+        </div>
+      </section>
+      <section class="card" style="margin-top: 12px">
+        <div class="row">
+          <strong>Last run</strong>
+          <span class="value" id="run-id">-</span>
+        </div>
+        <div class="row">
+          <strong>Run status</strong>
+          <span class="value" id="run-status">-</span>
+        </div>
+        <div class="row">
+          <strong>Started</strong>
+          <span class="value" id="run-started">-</span>
+        </div>
+        <div class="row">
+          <strong>Finished</strong>
+          <span class="value" id="run-finished">-</span>
+        </div>
+        <div class="row">
+          <strong>Failed action</strong>
+          <span class="value" id="run-failed-action">-</span>
+        </div>
+      </section>
+      <div class="status ok" id="message-box">Open or refresh a flow to capture a session.</div>
+      <div class="button-row">
+        <button class="secondary" id="refresh-button" type="button">Refresh tab</button>
+        <button id="revert-button" type="button">Revert update</button>
+      </div>
+      <button class="secondary" id="refresh-run-button" style="margin-top: 8px" type="button">Refresh run status</button>
+      <button class="secondary" id="resend-button" style="margin-top: 8px" type="button">Resend session</button>
+    </main>
+    <script src="popup.js"></script>
+  </body>
+</html>

@@ -1,0 +1,120 @@
+<svg width="1280" height="640" viewBox="0 0 1280 640" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="title desc">
+  <title id="title">MCP Power Automate banner</title>
+  <desc id="desc">A banner showing browser-backed flow control for Codex with extension, bridge, MCP, validation, runs, and rollback.</desc>
+  <defs>
+    <linearGradient id="bg" x1="82" y1="54" x2="1170" y2="604" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#071521"/>
+      <stop offset="0.54" stop-color="#0A2231"/>
+      <stop offset="1" stop-color="#112C3A"/>
+    </linearGradient>
+    <linearGradient id="card" x1="0" y1="0" x2="0" y2="1">
+      <stop stop-color="#113247"/>
+      <stop offset="1" stop-color="#0B2332"/>
+    </linearGradient>
+    <linearGradient id="accentA" x1="0" y1="0" x2="1" y2="1">
+      <stop stop-color="#48D1C5"/>
+      <stop offset="1" stop-color="#0EA5E9"/>
+    </linearGradient>
+    <linearGradient id="accentB" x1="0" y1="0" x2="1" y2="1">
+      <stop stop-color="#FFD166"/>
+      <stop offset="1" stop-color="#FF7A59"/>
+    </linearGradient>
+    <linearGradient id="lineGlow" x1="0" y1="0" x2="1" y2="0">
+      <stop stop-color="#4DD7C8"/>
+      <stop offset="1" stop-color="#FFB84D"/>
+    </linearGradient>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="18" stdDeviation="22" flood-color="#021018" flood-opacity="0.45"/>
+    </filter>
+    <pattern id="grid" width="36" height="36" patternUnits="userSpaceOnUse">
+      <path d="M36 0H0V36" stroke="#4A6980" stroke-opacity="0.15"/>
+    </pattern>
+  </defs>
+
+  <rect width="1280" height="640" rx="28" fill="url(#bg)"/>
+  <rect width="1280" height="640" rx="28" fill="url(#grid)"/>
+
+  <circle cx="1048" cy="116" r="148" fill="#1CC7B7" fill-opacity="0.08"/>
+  <circle cx="1004" cy="510" r="190" fill="#FF9B68" fill-opacity="0.08"/>
+  <circle cx="168" cy="120" r="112" fill="#0EA5E9" fill-opacity="0.08"/>
+
+  <g filter="url(#shadow)">
+    <rect x="52" y="50" width="1176" height="540" rx="26" fill="#091824" fill-opacity="0.72" stroke="#315067" stroke-opacity="0.6"/>
+  </g>
+
+  <g transform="translate(92 104)">
+    <rect x="0" y="0" width="66" height="66" rx="18" fill="url(#accentA)"/>
+    <rect x="44" y="44" width="66" height="66" rx="18" fill="url(#accentB)" fill-opacity="0.96"/>
+    <rect x="88" y="-20" width="66" height="66" rx="18" fill="#17384C" stroke="#6FD8CE" stroke-width="3"/>
+    <path d="M33 66V106H77" stroke="#C9F7F3" stroke-width="6" stroke-linecap="round"/>
+    <path d="M110 23H154V44" stroke="#C9F7F3" stroke-width="6" stroke-linecap="round"/>
+  </g>
+
+  <g transform="translate(92 210)">
+    <text x="0" y="0" fill="#EAF7FF" font-family="Segoe UI, Arial, sans-serif" font-size="54" font-weight="700">MCP Power Automate</text>
+    <text x="0" y="46" fill="#8ED9E8" font-family="Segoe UI, Arial, sans-serif" font-size="24" font-weight="600">Browser-backed flow control for Codex</text>
+    <text x="0" y="106" fill="#D4E7F1" font-family="Segoe UI, Arial, sans-serif" font-size="23" font-weight="400">
+      Read, validate, update, trigger, observe runs, and revert flows
+    </text>
+    <text x="0" y="140" fill="#D4E7F1" font-family="Segoe UI, Arial, sans-serif" font-size="23" font-weight="400">
+      through a local bridge and a lightweight Chromium extension.
+    </text>
+  </g>
+
+  <g transform="translate(92 404)">
+    <rect x="0" y="0" width="152" height="42" rx="21" fill="#12384A" stroke="#58CFC5"/>
+    <text x="76" y="27" text-anchor="middle" fill="#E9FCFB" font-family="Segoe UI, Arial, sans-serif" font-size="18" font-weight="700">Validate</text>
+    <rect x="168" y="0" width="126" height="42" rx="21" fill="#16384A" stroke="#78BFF7"/>
+    <text x="231" y="27" text-anchor="middle" fill="#EAF6FF" font-family="Segoe UI, Arial, sans-serif" font-size="18" font-weight="700">Update</text>
+    <rect x="310" y="0" width="112" height="42" rx="21" fill="#17354A" stroke="#F3B46A"/>
+    <text x="366" y="27" text-anchor="middle" fill="#FFF4E2" font-family="Segoe UI, Arial, sans-serif" font-size="18" font-weight="700">Runs</text>
+    <rect x="438" y="0" width="126" height="42" rx="21" fill="#1A3047" stroke="#FF9E72"/>
+    <text x="501" y="27" text-anchor="middle" fill="#FFF1EA" font-family="Segoe UI, Arial, sans-serif" font-size="18" font-weight="700">Rollback</text>
+  </g>
+
+  <g transform="translate(680 108)">
+    <rect x="0" y="0" width="458" height="404" rx="28" fill="#0C2130" stroke="#35556B"/>
+
+    <rect x="32" y="34" width="168" height="106" rx="22" fill="url(#card)" stroke="#5CD4C8"/>
+    <circle cx="58" cy="64" r="7" fill="#FFD166"/>
+    <circle cx="80" cy="64" r="7" fill="#48D1C5"/>
+    <circle cx="102" cy="64" r="7" fill="#FF7A59"/>
+    <rect x="48" y="84" width="74" height="12" rx="6" fill="#E9FAFF"/>
+    <rect x="48" y="106" width="98" height="10" rx="5" fill="#7AB9D4"/>
+    <rect x="48" y="124" width="58" height="10" rx="5" fill="#7AB9D4"/>
+    <text x="48" y="28" fill="#8ED9E8" font-family="Segoe UI, Arial, sans-serif" font-size="16" font-weight="700">Browser + Extension</text>
+
+    <rect x="258" y="34" width="168" height="106" rx="22" fill="url(#card)" stroke="#7ABEF4"/>
+    <rect x="286" y="70" width="112" height="16" rx="8" fill="#EAF7FF"/>
+    <rect x="286" y="98" width="72" height="14" rx="7" fill="#7ABEF4"/>
+    <rect x="286" y="120" width="96" height="12" rx="6" fill="#4CCFC4"/>
+    <text x="286" y="28" fill="#8ED9E8" font-family="Segoe UI, Arial, sans-serif" font-size="16" font-weight="700">Local Bridge + MCP</text>
+
+    <rect x="32" y="208" width="168" height="144" rx="22" fill="url(#card)" stroke="#F3B46A"/>
+    <text x="50" y="240" fill="#FFF1E0" font-family="Segoe UI, Arial, sans-serif" font-size="18" font-weight="700">Flow Ops</text>
+    <rect x="50" y="256" width="86" height="12" rx="6" fill="#FFF1E0"/>
+    <rect x="50" y="282" width="120" height="10" rx="5" fill="#E8B76C"/>
+    <rect x="50" y="304" width="100" height="10" rx="5" fill="#E8B76C"/>
+    <rect x="50" y="326" width="74" height="10" rx="5" fill="#E8B76C"/>
+    <text x="50" y="376" fill="#F8D6A1" font-family="Segoe UI, Arial, sans-serif" font-size="14" font-weight="600">read · validate · update · revert</text>
+
+    <rect x="258" y="208" width="168" height="144" rx="22" fill="url(#card)" stroke="#58CFC5"/>
+    <text x="276" y="240" fill="#EAFDFC" font-family="Segoe UI, Arial, sans-serif" font-size="18" font-weight="700">Run Ops</text>
+    <rect x="276" y="256" width="94" height="12" rx="6" fill="#EAFDFC"/>
+    <rect x="276" y="282" width="118" height="10" rx="5" fill="#68D5CB"/>
+    <rect x="276" y="304" width="96" height="10" rx="5" fill="#68D5CB"/>
+    <rect x="276" y="326" width="128" height="10" rx="5" fill="#68D5CB"/>
+    <text x="276" y="376" fill="#ABEFE8" font-family="Segoe UI, Arial, sans-serif" font-size="14" font-weight="600">invoke · wait · inspect · summarize</text>
+
+    <path d="M200 88H258" stroke="url(#lineGlow)" stroke-width="5" stroke-linecap="round"/>
+    <path d="M116 140V188" stroke="url(#lineGlow)" stroke-width="5" stroke-linecap="round"/>
+    <path d="M342 140V188" stroke="url(#lineGlow)" stroke-width="5" stroke-linecap="round"/>
+    <circle cx="229" cy="88" r="7" fill="#B9F1E9"/>
+    <circle cx="116" cy="164" r="7" fill="#FFD166"/>
+    <circle cx="342" cy="164" r="7" fill="#48D1C5"/>
+  </g>
+
+  <text x="92" y="572" fill="#88AFC1" font-family="Segoe UI, Arial, sans-serif" font-size="18" font-weight="500">
+    Open source helper for Codex-driven Power Automate workflows
+  </text>
+</svg>

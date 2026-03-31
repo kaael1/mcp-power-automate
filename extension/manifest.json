@@ -1,0 +1,41 @@
+{
+  "manifest_version": 3,
+  "name": "Power Automate MCP Bridge",
+  "description": "Captures the current Power Automate browser session and sends it to a local MCP bridge.",
+  "version": "0.1.0",
+  "permissions": ["storage", "tabs", "webRequest"],
+  "host_permissions": [
+    "*://*.flow.microsoft.com/*",
+    "*://*.make.powerautomate.com/*",
+    "*://*.make.powerapps.com/*",
+    "*://*.api.flow.microsoft.com/*",
+    "*://*.api.powerplatform.com/*",
+    "http://127.0.0.1:17373/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "*://*.make.powerautomate.com/*",
+        "*://*.flow.microsoft.com/*"
+      ],
+      "js": ["storage-capture.js"],
+      "run_at": "document_idle"
+    }
+  ],
+  "web_accessible_resources": [
+    {
+      "resources": ["page-probe.js"],
+      "matches": [
+        "*://*.make.powerautomate.com/*",
+        "*://*.flow.microsoft.com/*"
+      ]
+    }
+  ],
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "Power Automate MCP Bridge"
+  }
+}
