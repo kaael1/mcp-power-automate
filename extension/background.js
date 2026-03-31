@@ -1,5 +1,7 @@
 const BRIDGE_URL = 'http://127.0.0.1:17373';
 const STORAGE_KEYS = {
+  activeFlow: 'mcpPowerAutomate.activeFlow',
+  flowCatalog: 'mcpPowerAutomate.flowCatalog',
   lastError: 'mcpPowerAutomate.lastError',
   lastHealth: 'mcpPowerAutomate.lastHealth',
   lastRun: 'mcpPowerAutomate.lastRun',
@@ -86,6 +88,11 @@ const getStorage = (keys) =>
 const setStorage = (payload) =>
   new Promise((resolve) => {
     chrome.storage.local.set(payload, resolve);
+  });
+
+const removeStorage = (keys) =>
+  new Promise((resolve) => {
+    chrome.storage.local.remove(keys, resolve);
   });
 
 const getTab = (tabId) =>
@@ -244,6 +251,34 @@ const getLastRunFromBridge = async () => {
   return body.lastRun || null;
 };
 
+const getActiveFlowFromBridge = async () => {
+  const response = await fetch(`${BRIDGE_URL}/active-flow`);
+  const body = await response.json();
+
+  if (!response.ok) {
+    throw new Error(body.error || `Active flow bridge request failed with ${response.status}`);
+  }
+
+  return body.activeFlow || null;
+};
+
+const postSetActiveFlowFromTabToBridge = async () => {
+  const response = await fetch(`${BRIDGE_URL}/active-flow/from-tab`, {
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    method: 'POST',
+  });
+  const text = await response.text();
+  const body = text ? JSON.parse(text) : {};
+
+  if (!response.ok) {
+    throw new Error(body.error || `Set active flow bridge request failed with ${response.status}`);
+  }
+
+  return body.activeFlow || null;
+};
+
 const postRevertLastUpdateToBridge = async () => {
   const response = await fetch(`${BRIDGE_URL}/revert-last-update`, {
     headers: {
@@ -278,16 +313,20 @@ const postRefreshLastRunToBridge = async () => {
   return body.lastRun || null;
 };
 
-const persistSessionStatus = async ({ error = null, health = null, sentAt = null, session = null }) => {
+const persistSessionStatus = async ({ error, health, sentAt, session }) => {
   const payload = {};
 
-  if (error !== null) payload[STORAGE_KEYS.lastError] = error;
-  if (health !== null) payload[STORAGE_KEYS.lastHealth] = health;
-  if (sentAt !== null) payload[STORAGE_KEYS.lastSentAt] = sentAt;
-  if (session !== null) payload[STORAGE_KEYS.lastSession] = session;
+  if (error !== undefined && error !== null) payload[STORAGE_KEYS.lastError] = error;
+  if (health !== undefined && health !== null) payload[STORAGE_KEYS.lastHealth] = health;
+  if (sentAt !== undefined && sentAt !== null) payload[STORAGE_KEYS.lastSentAt] = sentAt;
+  if (session !== undefined && session !== null) payload[STORAGE_KEYS.lastSession] = session;
 
   if (Object.keys(payload).length > 0) {
     await setStorage(payload);
+  }
+
+  if (error === null) {
+    await removeStorage([STORAGE_KEYS.lastError]);
   }
 };
 
@@ -321,8 +360,15 @@ const maybeSendSession = async (session) => {
 const getPopupStatus = async () => {
   const storage = await getStorage(Object.values(STORAGE_KEYS));
   const health = await checkBridgeHealth();
+  let activeFlow = storage[STORAGE_KEYS.activeFlow] || null;
+  let lastError = storage[STORAGE_KEYS.lastError] || null;
   let lastRun = storage[STORAGE_KEYS.lastRun] || null;
   let lastUpdate = storage[STORAGE_KEYS.lastUpdate] || null;
+
+  if (health?.ok && lastError) {
+    await removeStorage([STORAGE_KEYS.lastError]);
+    lastError = null;
+  }
 
   try {
     lastRun = await getLastRunFromBridge();
@@ -342,9 +388,19 @@ const getPopupStatus = async () => {
     // Keep cached update info if the bridge cannot answer.
   }
 
+  try {
+    activeFlow = await getActiveFlowFromBridge();
+    await setStorage({
+      [STORAGE_KEYS.activeFlow]: activeFlow,
+    });
+  } catch {
+    // Keep cached active flow info if the bridge cannot answer.
+  }
+
   return {
+    activeFlow,
     bridge: health,
-    lastError: storage[STORAGE_KEYS.lastError] || null,
+    lastError,
     lastRun,
     lastUpdate,
     lastSentAt: storage[STORAGE_KEYS.lastSentAt] || null,
@@ -541,6 +597,13 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
   if (message?.type === 'refresh-current-tab') {
     refreshCurrentTab()
+      .then(async () => sendResponse(await getPopupStatus()))
+      .catch((error) => sendResponse({ error: error instanceof Error ? error.message : String(error) }));
+    return true;
+  }
+
+  if (message?.type === 'set-active-flow-from-tab') {
+    postSetActiveFlowFromTabToBridge()
       .then(async () => sendResponse(await getPopupStatus()))
       .catch((error) => sendResponse({ error: error instanceof Error ? error.message : String(error) }));
     return true;

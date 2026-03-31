@@ -3,9 +3,21 @@ import http from 'node:http';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { ZodError } from 'zod';
 
-import { bridgeHost, bridgePort, flowSnapshotSchema, sessionSchema, tokenAuditSchema } from './schemas.mjs';
+import { bridgeHost, bridgePort, flowIdSchema, flowSnapshotSchema, sessionSchema, tokenAuditSchema } from './schemas.mjs';
+import { getActiveTarget, loadActiveTarget, saveActiveTarget } from './active-target-store.mjs';
+import { loadFlowCatalog } from './flow-catalog-store.mjs';
 import { loadFlowSnapshot, saveFlowSnapshot, getFlowSnapshot } from './flow-snapshot-store.mjs';
-import { getLastRunSummary, getLastUpdateSummary, refreshLatestRun, revertLastUpdate } from './power-automate-client.mjs';
+import {
+  getActiveFlow,
+  getLastRunSummary,
+  getLastUpdateSummary,
+  listFlows,
+  refreshFlows,
+  refreshLatestRun,
+  revertLastUpdate,
+  setActiveFlow,
+  setActiveFlowFromTab,
+} from './power-automate-client.mjs';
 import { getLastRun, loadLastRun } from './last-run-store.mjs';
 import { loadSession, saveSession, getSession } from './session-store.mjs';
 import { loadTokenAudit, saveTokenAudit, getTokenAudit } from './token-audit-store.mjs';
@@ -47,10 +59,13 @@ const createHealthPayload = () => {
   const snapshot = getFlowSnapshot();
   const tokenAudit = getTokenAudit();
   const lastUpdate = getLastUpdate();
+  const activeTarget = getActiveTarget();
 
   return {
+    activeTarget,
     capturedAt: session?.capturedAt || null,
     bridgeMode: ownsBridgeServer ? 'owned' : 'reused',
+    currentTabFlowId: session?.flowId || null,
     hasLastUpdate: Boolean(lastUpdate),
     hasLastRun: Boolean(lastRun?.run),
     hasSnapshot: Boolean(snapshot),
@@ -103,6 +118,18 @@ const bridgeServer = http.createServer(async (request, response) => {
       const body = await readJsonBody(request);
       const session = sessionSchema.parse(body);
       const savedSession = await saveSession(session);
+      const existingTarget = getActiveTarget();
+
+      if (!existingTarget || existingTarget.envId !== savedSession.envId) {
+        await saveActiveTarget({
+          displayName: null,
+          envId: savedSession.envId,
+          flowId: savedSession.flowId,
+          selectedAt: new Date().toISOString(),
+          selectionSource: 'tab-capture',
+        });
+      }
+
       sendJson(response, 200, {
         capturedAt: savedSession.capturedAt,
         envId: savedSession.envId,
@@ -141,6 +168,48 @@ const bridgeServer = http.createServer(async (request, response) => {
       return;
     }
 
+    if (request.method === 'GET' && requestUrl.pathname === '/flows') {
+      sendJson(response, 200, {
+        flows: await listFlows({ limit: 200 }),
+        ok: true,
+      });
+      return;
+    }
+
+    if (request.method === 'POST' && requestUrl.pathname === '/refresh-flows') {
+      sendJson(response, 200, {
+        flows: await refreshFlows(),
+        ok: true,
+      });
+      return;
+    }
+
+    if (request.method === 'GET' && requestUrl.pathname === '/active-flow') {
+      sendJson(response, 200, {
+        activeFlow: await getActiveFlow(),
+        ok: true,
+      });
+      return;
+    }
+
+    if (request.method === 'POST' && requestUrl.pathname === '/active-flow') {
+      const body = await readJsonBody(request);
+      const flowId = flowIdSchema.parse(body.flowId);
+      sendJson(response, 200, {
+        activeFlow: await setActiveFlow({ flowId }),
+        ok: true,
+      });
+      return;
+    }
+
+    if (request.method === 'POST' && requestUrl.pathname === '/active-flow/from-tab') {
+      sendJson(response, 200, {
+        activeFlow: await setActiveFlowFromTab(),
+        ok: true,
+      });
+      return;
+    }
+
     if (request.method === 'POST' && requestUrl.pathname === '/revert-last-update') {
       const reverted = await revertLastUpdate();
       sendJson(response, 200, {
@@ -165,7 +234,7 @@ const bridgeServer = http.createServer(async (request, response) => {
     if (error instanceof ZodError) {
       sendJson(response, 400, {
         details: error.issues,
-        error: 'Invalid session payload.',
+        error: 'Invalid request payload.',
       });
       return;
     }
@@ -233,6 +302,8 @@ const ensureBridgeServer = async () => {
 
 const main = async () => {
   await loadSession();
+  await loadActiveTarget();
+  await loadFlowCatalog();
   await loadFlowSnapshot();
   await loadLastRun();
   await loadTokenAudit();

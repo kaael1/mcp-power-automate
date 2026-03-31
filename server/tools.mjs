@@ -1,6 +1,9 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 
 import {
+  cloneFlow,
+  createFlow,
+  getActiveFlow,
   getCurrentFlow,
   getLastRunSummary,
   getLastUpdateSummary,
@@ -10,16 +13,24 @@ import {
   getTriggerCallbackUrl,
   getStatus,
   invokeTrigger,
+  listFlows,
   listRuns,
+  refreshFlows,
   revertLastUpdate,
+  setActiveFlow,
+  setActiveFlowFromTab,
   updateCurrentFlow,
   validateCurrentFlow,
   waitForRun,
 } from './power-automate-client.mjs';
 import {
+  cloneFlowInputSchema,
+  createFlowInputSchema,
   getRunInputSchema,
   invokeTriggerInputSchema,
+  listFlowsInputSchema,
   listRunsInputSchema,
+  setActiveFlowInputSchema,
   triggerCallbackInputSchema,
   updateFlowInputSchema,
   validateFlowInputSchema,
@@ -36,11 +47,16 @@ const createErrorResult = (error) => ({
   isError: true,
 });
 
-const buildHealthPayload = () => ({
-  lastRun: getLastRunSummary(),
-  lastUpdate: getLastUpdateSummary(),
-  status: getStatus(),
-});
+const buildHealthPayload = () => {
+  const status = getStatus();
+
+  return {
+    activeFlow: status.activeTarget || null,
+    lastRun: getLastRunSummary(),
+    lastUpdate: getLastUpdateSummary(),
+    status,
+  };
+};
 
 const createJsonResource = (uri, payload) => ({
   contents: [
@@ -83,6 +99,20 @@ export const createMcpApp = () => {
       }),
   );
 
+  server.registerResource(
+    'power-automate-active-flow',
+    'power-automate://active-flow',
+    {
+      description: 'Currently selected flow target plus current browser tab flow context.',
+      mimeType: 'application/json',
+      title: 'Power Automate Active Flow',
+    },
+    async () =>
+      createJsonResource('power-automate://active-flow', {
+        activeFlow: await getActiveFlow(),
+      }),
+  );
+
   server.registerTool(
     'get_health',
     {
@@ -98,9 +128,111 @@ export const createMcpApp = () => {
   );
 
   server.registerTool(
+    'list_flows',
+    {
+      description: 'List flows from the currently captured environment and optionally filter by name.',
+      inputSchema: listFlowsInputSchema,
+    },
+    async ({ limit, query }) => {
+      try {
+        return createTextResult(await listFlows({ limit, query }));
+      } catch (error) {
+        return createErrorResult(error);
+      }
+    },
+  );
+
+  server.registerTool(
+    'refresh_flows',
+    {
+      description: 'Refresh the flow catalog for the currently captured environment.',
+    },
+    async () => {
+      try {
+        return createTextResult(await refreshFlows());
+      } catch (error) {
+        return createErrorResult(error);
+      }
+    },
+  );
+
+  server.registerTool(
+    'set_active_flow',
+    {
+      description: 'Select which flow the MCP should operate on inside the current environment.',
+      inputSchema: setActiveFlowInputSchema,
+    },
+    async ({ flowId }) => {
+      try {
+        return createTextResult(await setActiveFlow({ flowId }));
+      } catch (error) {
+        return createErrorResult(error);
+      }
+    },
+  );
+
+  server.registerTool(
+    'set_active_flow_from_tab',
+    {
+      description: 'Set the active flow target from the currently captured browser tab flow.',
+    },
+    async () => {
+      try {
+        return createTextResult(await setActiveFlowFromTab());
+      } catch (error) {
+        return createErrorResult(error);
+      }
+    },
+  );
+
+  server.registerTool(
+    'get_active_flow',
+    {
+      description: 'Return the selected flow target plus the current browser tab flow context.',
+    },
+    async () => {
+      try {
+        return createTextResult(await getActiveFlow());
+      } catch (error) {
+        return createErrorResult(error);
+      }
+    },
+  );
+
+  server.registerTool(
+    'create_flow',
+    {
+      description: 'Create a new blank flow in the current environment and select it as the active target.',
+      inputSchema: createFlowInputSchema,
+    },
+    async ({ displayName, triggerType }) => {
+      try {
+        return createTextResult(await createFlow({ displayName, triggerType }));
+      } catch (error) {
+        return createErrorResult(error);
+      }
+    },
+  );
+
+  server.registerTool(
+    'clone_flow',
+    {
+      description: 'Clone an existing flow inside the current environment and optionally make the clone the active target.',
+      inputSchema: cloneFlowInputSchema,
+    },
+    async ({ displayName, makeActive, sourceFlowId }) => {
+      try {
+        return createTextResult(await cloneFlow({ displayName, makeActive, sourceFlowId }));
+      } catch (error) {
+        return createErrorResult(error);
+      }
+    },
+  );
+
+  server.registerTool(
     'get_status',
     {
-      description: 'Show whether a Power Automate browser session is captured and which flow is currently active.',
+      description: 'Show whether a Power Automate browser session is captured, which flow is selected, and which flow is open in the current tab.',
     },
     async () => {
       try {
@@ -114,7 +246,7 @@ export const createMcpApp = () => {
   server.registerTool(
     'get_flow',
     {
-      description: 'Fetch the currently captured Power Automate flow and return a normalized editable payload.',
+      description: 'Fetch the selected Power Automate flow target and return a normalized editable payload.',
     },
     async () => {
       try {
@@ -129,7 +261,7 @@ export const createMcpApp = () => {
     'update_flow',
     {
       description:
-        'Update the currently captured flow using the normalized flow payload returned by get_flow. The existing environment metadata is preserved automatically.',
+        'Update the selected flow using the normalized flow payload returned by get_flow. The existing environment metadata is preserved automatically.',
       inputSchema: updateFlowInputSchema,
     },
     async ({ displayName, flow }) => {
@@ -144,7 +276,7 @@ export const createMcpApp = () => {
   server.registerTool(
     'list_runs',
     {
-      description: 'List recent runs for the currently active flow.',
+      description: 'List recent runs for the selected flow target.',
       inputSchema: listRunsInputSchema,
     },
     async ({ limit }) => {
@@ -159,7 +291,7 @@ export const createMcpApp = () => {
   server.registerTool(
     'get_latest_run',
     {
-      description: 'Return the most recent run for the currently active flow.',
+      description: 'Return the most recent run for the selected flow target.',
     },
     async () => {
       try {
@@ -173,7 +305,7 @@ export const createMcpApp = () => {
   server.registerTool(
     'get_trigger_callback_url',
     {
-      description: 'Return the callback URL for the current flow trigger when the trigger supports manual invocation.',
+      description: 'Return the callback URL for the selected flow trigger when the trigger supports manual invocation.',
       inputSchema: triggerCallbackInputSchema,
     },
     async ({ triggerName }) => {
@@ -188,7 +320,7 @@ export const createMcpApp = () => {
   server.registerTool(
     'invoke_trigger',
     {
-      description: 'Invoke the current flow trigger using its callback URL when the trigger supports manual execution.',
+      description: 'Invoke the selected flow trigger using its callback URL when the trigger supports manual execution.',
       inputSchema: invokeTriggerInputSchema,
     },
     async ({ body, triggerName }) => {
@@ -203,7 +335,7 @@ export const createMcpApp = () => {
   server.registerTool(
     'get_run',
     {
-      description: 'Return details for a specific run of the currently active flow.',
+      description: 'Return details for a specific run of the selected flow target.',
       inputSchema: getRunInputSchema,
     },
     async ({ runId }) => {
@@ -218,7 +350,7 @@ export const createMcpApp = () => {
   server.registerTool(
     'get_run_actions',
     {
-      description: 'Return action-level statuses for a specific run of the currently active flow.',
+      description: 'Return action-level statuses for a specific run of the selected flow target.',
       inputSchema: getRunInputSchema,
     },
     async ({ runId }) => {
@@ -282,7 +414,7 @@ export const createMcpApp = () => {
     'revert_last_update',
     {
       description:
-        'Revert the current active flow to the last successfully recorded before-state. The active flow must match the last updated flow.',
+        'Revert the selected flow target to the last successfully recorded before-state. The target flow must match the last updated flow.',
     },
     async () => {
       try {
@@ -297,7 +429,7 @@ export const createMcpApp = () => {
     'validate_flow',
     {
       description:
-        'Validate the currently captured flow definition using the legacy Power Automate validation endpoints when available.',
+        'Validate the selected flow definition using the legacy Power Automate validation endpoints when available.',
       inputSchema: validateFlowInputSchema,
     },
     async ({ flow }) => {

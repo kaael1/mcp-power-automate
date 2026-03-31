@@ -22,26 +22,28 @@ This skill assumes:
 - the MCP server `power-automate-local` is installed in Codex
 - the browser extension from this repo is loaded
 - the user is logged into Power Automate in a Chromium browser
-- the relevant flow is open in the browser
+- at least one flow from the relevant environment has been opened in the browser so auth and environment context are captured
 
 ## Core safety rules
 
 Always follow these rules:
 
 1. Treat the active browser flow as the target flow.
-2. Use `get_status` before any edit or test.
-3. Do not edit if the user says another person or agent is actively editing the same flow.
-4. Prefer minimal changes and validate before and after save.
-5. Refresh the browser tab after save when the user needs visual confirmation.
-6. If the result is not what was intended, use `revert_last_update`.
-7. For high-risk or production flows, prefer working on a disposable or staging flow first.
+2. Use `list_flows` plus `set_active_flow` before any meaningful edit or test.
+3. Use `get_status` before writes to confirm the selected target flow and current tab flow are not being confused.
+4. Do not edit if the user says another person or agent is actively editing the same flow.
+5. Prefer minimal changes and validate before and after save.
+6. Refresh the browser tab after save when the user needs visual confirmation.
+7. If the result is not what was intended, use `revert_last_update`.
+8. For high-risk or production flows, prefer working on a disposable or staging flow first.
 
 ## Operating model
 
 Important limitations:
 
-- The MCP targets the flow currently captured from the browser tab.
-- If the user switches to a different flow tab and the extension captures it, the target flow changes.
+- The MCP no longer follows the active tab automatically once a target flow is selected.
+- The browser tab still provides auth and current-environment context.
+- The agent should explicitly choose a target with `list_flows` and `set_active_flow`.
 - The system depends on browser-backed session and token capture.
 - Rollback is currently only one step deep.
 - The popup shows a summary, not a full visual diff.
@@ -56,7 +58,8 @@ Use this when the user asks what the flow does.
 Steps:
 
 1. Call `get_status`.
-2. Call `get_flow`.
+2. Call `list_flows` if the selected target is unclear.
+3. Call `get_flow`.
 3. Optionally call `validate_flow`.
 4. If runs matter, call `get_latest_run` and `get_run_actions`.
 
@@ -67,7 +70,8 @@ Use this when the user asks for a flow change.
 Steps:
 
 1. Call `get_status`.
-2. Call `get_flow`.
+2. Call `list_flows` and `set_active_flow` unless the target is already explicit and confirmed.
+3. Call `get_flow`.
 3. Plan the smallest possible change.
 4. Call `validate_flow` on the candidate flow before save when possible.
 5. Call `update_flow`.
@@ -82,6 +86,7 @@ Use this when the flow has a trigger that supports callback invocation.
 Steps:
 
 1. Call `get_flow` and confirm the trigger is manual/request based.
+2. If needed, call `list_flows` and `set_active_flow` first.
 2. Call `get_trigger_callback_url`.
 3. Call `invoke_trigger` with a controlled test payload.
 4. Call `wait_for_run`.
@@ -105,13 +110,34 @@ Steps:
 ## Tool quick reference
 
 - `get_status`
-  Confirms the active flow, environment, and whether legacy access is available.
+  Confirms the selected target flow, current tab flow, environment, and whether legacy access is available.
 
 - `get_health`
   Returns a compact troubleshooting payload with current status plus cached run and update summaries.
 
+- `list_flows`
+  Lists flows in the current environment.
+
+- `refresh_flows`
+  Refreshes the current environment flow catalog from Power Automate.
+
+- `set_active_flow`
+  Locks the MCP onto a specific `flowId` in the current environment.
+
+- `set_active_flow_from_tab`
+  Re-targets the MCP to the flow currently open in the captured browser tab.
+
+- `get_active_flow`
+  Returns both the selected target flow and the current tab flow.
+
 - `get_flow`
-  Returns the normalized flow payload for analysis or editing.
+  Returns the normalized payload for the selected target flow.
+
+- `create_flow`
+  Creates a blank request or recurrence flow and selects it as the active target.
+
+- `clone_flow`
+  Clones an existing flow and can optionally make the clone the active target.
 
 - `validate_flow`
   Uses the legacy flow API to validate the current definition.
@@ -187,6 +213,8 @@ If the MCP looks installed but tools do not appear or the session behaves incons
 
 1. Check the local bridge health at `http://127.0.0.1:17373/health`.
 2. Confirm the browser extension popup shows the expected `Env ID` and `Flow ID`.
-3. Refresh the Power Automate tab after reloading the extension.
-4. If port `17373` is busy, prefer reusing the healthy bridge instead of starting another manual copy.
-5. If the bridge is unhealthy, stop the stale process and start a fresh session.
+3. Confirm the popup `Selected flow` is the one the agent is supposed to operate on.
+4. If needed, use `set_active_flow_from_tab` or the popup button to lock the current tab as the target.
+5. Refresh the Power Automate tab after reloading the extension.
+6. If port `17373` is busy, prefer reusing the healthy bridge instead of starting another manual copy.
+7. If the bridge is unhealthy, stop the stale process and start a fresh session.

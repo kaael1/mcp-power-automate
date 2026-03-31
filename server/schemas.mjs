@@ -9,6 +9,7 @@ export const flowIdSchema = z.string().trim().min(1, 'flowId is required');
 export const envIdSchema = z.string().trim().min(1, 'envId is required');
 export const tokenSchema = z.string().trim().min(1, 'token is required');
 export const baseUrlSchema = z.string().url('baseUrl must be a valid URL');
+export const selectionSourceSchema = z.enum(['clone-result', 'create-result', 'manual', 'tab-capture']);
 
 export const sessionSchema = z.object({
   apiToken: tokenSchema,
@@ -24,6 +25,33 @@ export const sessionSchema = z.object({
 export const flowContentSchema = z.object({
   connectionReferences: z.record(z.string(), z.unknown()),
   definition: z.record(z.string(), z.unknown()),
+});
+
+export const flowCatalogItemSchema = z.object({
+  actionTypes: z.array(z.string()).optional(),
+  createdTime: z.string().nullable().optional(),
+  displayName: z.string().trim().min(1, 'displayName is required'),
+  envId: envIdSchema,
+  flowId: flowIdSchema,
+  lastModifiedTime: z.string().nullable().optional(),
+  state: z.string().nullable().optional(),
+  triggerTypes: z.array(z.string()).optional(),
+  userType: z.string().nullable().optional(),
+});
+
+export const flowCatalogSchema = z.object({
+  capturedAt: z.string().trim().min(1, 'capturedAt is required'),
+  envId: envIdSchema,
+  flows: z.array(flowCatalogItemSchema),
+  source: z.string().trim().min(1, 'source is required'),
+});
+
+export const activeTargetSchema = z.object({
+  displayName: z.string().nullable().optional(),
+  envId: envIdSchema,
+  flowId: flowIdSchema,
+  selectedAt: z.string().trim().min(1, 'selectedAt is required'),
+  selectionSource: selectionSourceSchema,
 });
 
 export const updateFlowInputSchema = z.object({
@@ -119,6 +147,26 @@ export const lastRunSchema = z.object({
 
 export const listRunsInputSchema = z.object({
   limit: z.number().int().positive().max(50).optional(),
+});
+
+export const listFlowsInputSchema = z.object({
+  limit: z.number().int().positive().max(200).optional(),
+  query: z.string().trim().min(1).optional(),
+});
+
+export const setActiveFlowInputSchema = z.object({
+  flowId: flowIdSchema,
+});
+
+export const createFlowInputSchema = z.object({
+  displayName: z.string().trim().min(1, 'displayName is required'),
+  triggerType: z.enum(['recurrence', 'request']).optional(),
+});
+
+export const cloneFlowInputSchema = z.object({
+  displayName: z.string().trim().min(1).optional(),
+  makeActive: z.boolean().optional(),
+  sourceFlowId: flowIdSchema,
 });
 
 export const getRunInputSchema = z.object({

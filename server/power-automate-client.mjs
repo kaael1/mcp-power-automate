@@ -1,9 +1,11 @@
-import { getFlowSnapshot } from './flow-snapshot-store.mjs';
-import { getLastRun, saveLastRun } from './last-run-store.mjs';
+import { getActiveTarget, saveActiveTarget } from './active-target-store.mjs';
+import { getFlowCatalogForEnv, saveFlowCatalog } from './flow-catalog-store.mjs';
+import { getFlowSnapshot, getFlowSnapshotForFlow } from './flow-snapshot-store.mjs';
+import { getLastRun, getLastRunForFlow, saveLastRun } from './last-run-store.mjs';
+import { getLastUpdate, getLastUpdateForFlow, saveLastUpdate } from './update-history-store.mjs';
 import { editorSchema } from './schemas.mjs';
 import { getSession } from './session-store.mjs';
 import { getTokenAudit } from './token-audit-store.mjs';
-import { getLastUpdate, saveLastUpdate } from './update-history-store.mjs';
 
 const MODERN_API_VERSION = '1';
 const LEGACY_API_VERSION = '2016-11-01';
@@ -27,6 +29,47 @@ const ensureSession = () => {
   }
 
   return session;
+};
+
+const createTabTargetFromSession = (session) => {
+  if (!session?.flowId) return null;
+
+  return {
+    displayName: null,
+    envId: session.envId,
+    flowId: session.flowId,
+    selectedAt: session.capturedAt,
+    selectionSource: 'tab-capture',
+  };
+};
+
+const getActiveOrTabTarget = (session) => {
+  const activeTarget = getActiveTarget();
+
+  if (activeTarget?.envId === session.envId) {
+    return activeTarget;
+  }
+
+  return createTabTargetFromSession(session);
+};
+
+const ensureTargetSession = () => {
+  const session = ensureSession();
+  const target = getActiveOrTabTarget(session);
+
+  if (!target?.flowId) {
+    throw new PowerAutomateSessionError(
+      'No active flow target is selected. Use list_flows and set_active_flow, or capture the current tab as the active target first.',
+    );
+  }
+
+  return {
+    ...session,
+    flowId: target.flowId,
+    targetDisplayName: target.displayName || null,
+    targetSelectedAt: target.selectedAt,
+    targetSelectionSource: target.selectionSource,
+  };
 };
 
 const ensureTrailingSlash = (value) => (value.endsWith('/') ? value : `${value}/`);
@@ -89,6 +132,9 @@ const getCurrentFlowResourcePath = (flowId) => `powerautomate/flows/${flowId}`;
 const getLegacyFlowBasePath = (envId, flowId) =>
   `providers/Microsoft.ProcessSimple/environments/${envId}/flows/${flowId}`;
 
+const getLegacyFlowsCollectionPath = (envId) =>
+  `providers/Microsoft.ProcessSimple/environments/${envId}/flows`;
+
 const getPreferredLegacySession = (session) => {
   if (session.legacyApiUrl && session.legacyToken) {
     return {
@@ -128,6 +174,27 @@ const normalizeFlow = (session, flowResponse) => {
   };
 };
 
+const normalizeFlowCatalogItem = (session, flowResponse) => {
+  const properties = flowResponse?.properties || {};
+  const definitionSummary = properties.definitionSummary || {};
+
+  return {
+    actionTypes: Array.isArray(definitionSummary.actions)
+      ? definitionSummary.actions.map((action) => action?.type).filter(Boolean)
+      : [],
+    createdTime: properties.createdTime || null,
+    displayName: properties.displayName || flowResponse?.name || 'Untitled flow',
+    envId: session.envId,
+    flowId: flowResponse?.name || null,
+    lastModifiedTime: properties.lastModifiedTime || null,
+    state: properties.state || null,
+    triggerTypes: Array.isArray(definitionSummary.triggers)
+      ? definitionSummary.triggers.map((trigger) => trigger?.type).filter(Boolean)
+      : [],
+    userType: properties.userType || null,
+  };
+};
+
 const normalizeLegacyFlow = (session, flowResponse) => {
   const properties = flowResponse?.properties || {};
 
@@ -157,6 +224,36 @@ const normalizeSnapshot = (snapshot) => ({
   flowId: snapshot.flowId,
   source: snapshot.source,
 });
+
+const getDisplayNameFromSnapshot = (snapshot) =>
+  snapshot?.displayName || snapshot?.flow?.definition?.metadata?.displayName || null;
+
+const resolveCurrentTabFlowName = (session) => {
+  if (!session?.flowId) return null;
+
+  const snapshot = getFlowSnapshotForFlow({ envId: session.envId, flowId: session.flowId }) || getFlowSnapshot();
+
+  if (snapshot?.flowId === session.flowId && snapshot?.envId === session.envId) {
+    return getDisplayNameFromSnapshot(snapshot);
+  }
+
+  const catalog = getFlowCatalogForEnv(session.envId);
+  return catalog?.flows?.find((flow) => flow.flowId === session.flowId)?.displayName || null;
+};
+
+const resolveTargetDisplayName = (session) => {
+  const target = getActiveOrTabTarget(session);
+
+  if (!target?.flowId) return null;
+  if (target.displayName) return target.displayName;
+
+  const catalog = getFlowCatalogForEnv(target.envId);
+  const catalogMatch = catalog?.flows?.find((flow) => flow.flowId === target.flowId);
+  if (catalogMatch?.displayName) return catalogMatch.displayName;
+
+  const snapshot = getFlowSnapshotForFlow({ envId: target.envId, flowId: target.flowId });
+  return getDisplayNameFromSnapshot(snapshot);
+};
 
 const summarizeFlowForHistory = (normalizedFlow) => {
   const actions = normalizedFlow?.flow?.definition?.actions || {};
@@ -203,16 +300,16 @@ const createLastUpdateRecord = ({ before, after }) => {
   };
 };
 
-const fetchRawCurrentFlowModern = async (session) =>
+const fetchRawFlowModern = async (session, flowId = session.flowId) =>
   requestJson({
     apiVersion: MODERN_API_VERSION,
     baseUrl: session.apiUrl,
     method: 'GET',
-    resourcePath: getCurrentFlowResourcePath(session.flowId),
+    resourcePath: getCurrentFlowResourcePath(flowId),
     token: session.apiToken,
   });
 
-const fetchRawCurrentFlowLegacy = async (session) => {
+const fetchRawFlowLegacy = async (session, flowId = session.flowId) => {
   const legacySession = getPreferredLegacySession(session);
 
   if (!legacySession) {
@@ -225,14 +322,65 @@ const fetchRawCurrentFlowLegacy = async (session) => {
     apiVersion: LEGACY_API_VERSION,
     baseUrl: legacySession.baseUrl,
     method: 'GET',
-    resourcePath: getLegacyFlowBasePath(session.envId, session.flowId),
+    resourcePath: getLegacyFlowBasePath(session.envId, flowId),
     token: legacySession.token,
   });
+};
+
+const listFlowsLegacy = async (session) => {
+  const legacySession = getPreferredLegacySession(session);
+
+  if (!legacySession) {
+    throw new PowerAutomateSessionError(
+      'No flow-compatible legacy token is available yet. Refresh the flow page again to capture a better token.',
+    );
+  }
+
+  const response = await requestJson({
+    apiVersion: LEGACY_API_VERSION,
+    baseUrl: legacySession.baseUrl,
+    method: 'GET',
+    resourcePath: getLegacyFlowsCollectionPath(session.envId),
+    token: legacySession.token,
+  });
+
+  const flows = Array.isArray(response?.value)
+    ? response.value
+        .map((flow) => normalizeFlowCatalogItem(session, flow))
+        .filter((flow) => flow.flowId)
+        .sort((left, right) => left.displayName.localeCompare(right.displayName))
+    : [];
+
+  const catalog = {
+    capturedAt: new Date().toISOString(),
+    envId: session.envId,
+    flows,
+    source: legacySession.source,
+  };
+
+  await saveFlowCatalog(catalog);
+  return catalog;
+};
+
+const filterCatalogFlows = (catalog, { limit = 100, query } = {}) => {
+  const normalizedQuery = query?.trim().toLowerCase() || null;
+  const filteredFlows = normalizedQuery
+    ? catalog.flows.filter((flow) => flow.displayName.toLowerCase().includes(normalizedQuery))
+    : catalog.flows;
+
+  return {
+    ...catalog,
+    flows: filteredFlows.slice(0, limit),
+    total: filteredFlows.length,
+  };
 };
 
 export const getStatus = () => {
   const session = getSession();
   const legacySession = session ? getPreferredLegacySession(session) : null;
+  const activeTarget = session ? getActiveOrTabTarget(session) : null;
+  const targetDisplayName = session ? resolveTargetDisplayName(session) : null;
+  const currentTabFlowName = session ? resolveCurrentTabFlowName(session) : null;
 
   if (!session) {
     return {
@@ -242,10 +390,18 @@ export const getStatus = () => {
   }
 
   return {
+    activeTarget: activeTarget
+      ? {
+          ...activeTarget,
+          displayName: targetDisplayName,
+        }
+      : null,
     capturedAt: session.capturedAt,
     connected: true,
+    currentTabFlowId: session.flowId || null,
+    currentTabFlowName,
     envId: session.envId,
-    flowId: session.flowId,
+    flowId: activeTarget?.flowId || session.flowId,
     hasLegacyApi: Boolean(legacySession),
     legacySource: legacySession?.source || null,
     portalUrl: session.portalUrl || null,
@@ -253,17 +409,18 @@ export const getStatus = () => {
 };
 
 export const getCurrentFlow = async () => {
-  const session = ensureSession();
+  const session = ensureTargetSession();
 
   try {
-    const flowResponse = await fetchRawCurrentFlowModern(session);
+    const flowResponse = await fetchRawFlowModern(session);
     return normalizeFlow(session, flowResponse);
   } catch {
     try {
-      const legacyFlowResponse = await fetchRawCurrentFlowLegacy(session);
+      const legacyFlowResponse = await fetchRawFlowLegacy(session);
       return normalizeLegacyFlow(session, legacyFlowResponse);
     } catch (legacyError) {
-      const snapshot = getFlowSnapshot();
+      const snapshot =
+        getFlowSnapshotForFlow({ envId: session.envId, flowId: session.flowId }) || getFlowSnapshot();
 
       if (snapshot && snapshot.flowId === session.flowId && snapshot.envId === session.envId) {
         return normalizeSnapshot(snapshot);
@@ -274,8 +431,101 @@ export const getCurrentFlow = async () => {
   }
 };
 
+export const refreshFlows = async () => {
+  const session = ensureSession();
+  return listFlowsLegacy(session);
+};
+
+export const listFlows = async ({ limit = 100, query } = {}) => {
+  const session = ensureSession();
+  try {
+    const freshCatalog = await listFlowsLegacy(session);
+    return filterCatalogFlows(freshCatalog, { limit, query });
+  } catch (error) {
+    const cachedCatalog = getFlowCatalogForEnv(session.envId);
+
+    if (cachedCatalog) {
+      return {
+        ...filterCatalogFlows(cachedCatalog, { limit, query }),
+        message:
+          'Returned cached flow catalog because the live refresh failed. Refresh the Power Automate session if the list looks stale.',
+      };
+    }
+
+    throw error;
+  }
+};
+
+export const setActiveFlow = async ({ flowId, selectionSource = 'manual' }) => {
+  const session = ensureSession();
+  const catalog = getFlowCatalogForEnv(session.envId) || (await listFlowsLegacy(session));
+  const matchingFlow = catalog.flows.find((flow) => flow.flowId === flowId);
+
+  if (!matchingFlow) {
+    throw new PowerAutomateSessionError(
+      `The flow ${flowId} was not found in the current environment catalog. Refresh flows and try again.`,
+    );
+  }
+
+  const target = await saveActiveTarget({
+    displayName: matchingFlow.displayName,
+    envId: session.envId,
+    flowId,
+    selectedAt: new Date().toISOString(),
+    selectionSource,
+  });
+
+  return {
+    activeTarget: target,
+    flow: matchingFlow,
+  };
+};
+
+export const setActiveFlowFromTab = async () => {
+  const session = ensureSession();
+
+  if (!session.flowId) {
+    throw new PowerAutomateSessionError('No flow is associated with the current browser tab yet.');
+  }
+
+  if (!getFlowCatalogForEnv(session.envId)) {
+    await listFlowsLegacy(session);
+  }
+
+  return setActiveFlow({
+    flowId: session.flowId,
+    selectionSource: 'tab-capture',
+  });
+};
+
+export const getActiveFlow = async () => {
+  const session = ensureSession();
+  const target = getActiveOrTabTarget(session);
+
+  if (!target) {
+    return {
+      activeTarget: null,
+    };
+  }
+
+  const catalog = getFlowCatalogForEnv(session.envId) || (await listFlowsLegacy(session));
+  const matchingFlow = catalog.flows.find((flow) => flow.flowId === target.flowId) || null;
+
+  return {
+    activeTarget: {
+      ...target,
+      displayName: matchingFlow?.displayName || resolveTargetDisplayName(session),
+    },
+    currentTab: {
+      displayName: resolveCurrentTabFlowName(session),
+      envId: session.envId,
+      flowId: session.flowId || null,
+    },
+  };
+};
+
 const updateCurrentFlowModern = async (session, { displayName, flow }) => {
-  const before = normalizeFlow(session, await fetchRawCurrentFlowModern(session));
+  const before = normalizeFlow(session, await fetchRawFlowModern(session));
   const currentProperties = {
     connectionReferences: before.flow.connectionReferences,
     definition: before.flow.definition,
@@ -313,7 +563,7 @@ const updateCurrentFlowLegacy = async (session, { displayName, flow }) => {
     );
   }
 
-  const before = normalizeLegacyFlow(session, await fetchRawCurrentFlowLegacy(session));
+  const before = normalizeLegacyFlow(session, await fetchRawFlowLegacy(session));
   const currentProperties = {
     connectionReferences: before.flow.connectionReferences,
     definition: before.flow.definition,
@@ -343,7 +593,7 @@ const updateCurrentFlowLegacy = async (session, { displayName, flow }) => {
 };
 
 export const updateCurrentFlow = async ({ displayName, flow }) => {
-  const session = ensureSession();
+  const session = ensureTargetSession();
 
   try {
     return await updateCurrentFlowModern(session, { displayName, flow });
@@ -352,11 +602,184 @@ export const updateCurrentFlow = async ({ displayName, flow }) => {
   }
 };
 
-export const getLastUpdateSummary = () => getLastUpdate();
+const buildBlankRequestDefinition = () => ({
+  $schema:
+    'https://schema.management.azure.com/providers/Microsoft.Logic/schemas/2016-06-01/workflowdefinition.json#',
+  actions: {
+    Response: {
+      inputs: {
+        body: {
+          ok: true,
+        },
+        statusCode: 200,
+      },
+      kind: 'Http',
+      runAfter: {},
+      type: 'Response',
+    },
+  },
+  contentVersion: '1.0.0.0',
+  outputs: {},
+  parameters: {
+    $authentication: {
+      defaultValue: {},
+      type: 'SecureObject',
+    },
+  },
+  triggers: {
+    manual: {
+      inputs: {
+        schema: {
+          properties: {},
+          type: 'object',
+        },
+      },
+      kind: 'Http',
+      type: 'Request',
+    },
+  },
+});
+
+const buildBlankRecurrenceDefinition = () => ({
+  $schema:
+    'https://schema.management.azure.com/providers/Microsoft.Logic/schemas/2016-06-01/workflowdefinition.json#',
+  actions: {
+    Compose: {
+      inputs: 'Scheduled run completed.',
+      runAfter: {},
+      type: 'Compose',
+    },
+  },
+  contentVersion: '1.0.0.0',
+  outputs: {},
+  parameters: {
+    $authentication: {
+      defaultValue: {},
+      type: 'SecureObject',
+    },
+  },
+  triggers: {
+    Recurrence: {
+      recurrence: {
+        frequency: 'Day',
+        interval: 1,
+      },
+      type: 'Recurrence',
+    },
+  },
+});
+
+const createFlowLegacy = async (session, { displayName, flow }) => {
+  const legacySession = getPreferredLegacySession(session);
+
+  if (!legacySession) {
+    throw new PowerAutomateSessionError(
+      'No flow-compatible legacy token is available yet. Refresh the flow page again to capture a better token.',
+    );
+  }
+
+  const createdFlow = await requestJson({
+    apiVersion: LEGACY_API_VERSION,
+    baseUrl: legacySession.baseUrl,
+    body: {
+      properties: {
+        connectionReferences: flow.connectionReferences,
+        definition: flow.definition,
+        displayName,
+      },
+    },
+    method: 'POST',
+    resourcePath: getLegacyFlowsCollectionPath(session.envId),
+    token: legacySession.token,
+  });
+
+  const createdFlowId = createdFlow?.name || extractNameFromId(createdFlow?.id);
+
+  if (!createdFlowId) {
+    throw new Error('The create flow response did not include a flow ID.');
+  }
+
+  return normalizeLegacyFlow(
+    {
+      ...session,
+      flowId: createdFlowId,
+    },
+    createdFlow,
+  );
+};
+
+export const createFlow = async ({ displayName, triggerType = 'request' }) => {
+  const session = ensureSession();
+  const flow = {
+    connectionReferences: {},
+    definition: triggerType === 'recurrence' ? buildBlankRecurrenceDefinition() : buildBlankRequestDefinition(),
+  };
+  const created = await createFlowLegacy(session, { displayName, flow });
+  const activeTarget = await saveActiveTarget({
+    displayName: created.displayName,
+    envId: created.envId,
+    flowId: created.flowId,
+    selectedAt: new Date().toISOString(),
+    selectionSource: 'create-result',
+  });
+  await listFlowsLegacy(session);
+
+  return {
+    activeTarget,
+    flow: created,
+  };
+};
+
+export const cloneFlow = async ({ displayName, makeActive = true, sourceFlowId }) => {
+  const session = ensureSession();
+  const sourceResponse = await fetchRawFlowLegacy(session, sourceFlowId);
+  const source = normalizeLegacyFlow(
+    {
+      ...session,
+      flowId: sourceFlowId,
+    },
+    sourceResponse,
+  );
+  const cloned = await createFlowLegacy(session, {
+    displayName: displayName || `${source.displayName} Copy`,
+    flow: source.flow,
+  });
+
+  let activeTarget = getActiveTarget();
+
+  if (makeActive) {
+    activeTarget = await saveActiveTarget({
+      displayName: cloned.displayName,
+      envId: cloned.envId,
+      flowId: cloned.flowId,
+      selectedAt: new Date().toISOString(),
+      selectionSource: 'clone-result',
+    });
+  }
+
+  await listFlowsLegacy(session);
+
+  return {
+    activeTarget,
+    flow: cloned,
+    sourceFlowId,
+  };
+};
+
+export const getLastUpdateSummary = () => {
+  const session = getSession();
+
+  if (!session) {
+    return getLastUpdate();
+  }
+
+  const target = getActiveOrTabTarget(session);
+  return target ? getLastUpdateForFlow(target) || getLastUpdate() : getLastUpdate();
+};
 
 export const revertLastUpdate = async () => {
-  const session = ensureSession();
-  const lastUpdate = getLastUpdate();
+  const session = ensureTargetSession();
+  const lastUpdate = getLastUpdateForFlow(session) || getLastUpdate();
 
   if (!lastUpdate) {
     throw new PowerAutomateSessionError('No previous update is available to revert.');
@@ -539,7 +962,7 @@ const getCurrentTriggerName = async (session) => {
 };
 
 export const validateCurrentFlow = async ({ flow }) => {
-  const session = ensureSession();
+  const session = ensureTargetSession();
   const legacySession = getPreferredLegacySession(session);
 
   if (!legacySession) {
@@ -585,12 +1008,12 @@ export const validateCurrentFlow = async ({ flow }) => {
 };
 
 export const listRuns = async ({ limit = 10 } = {}) => {
-  const session = ensureSession();
+  const session = ensureTargetSession();
   return listRunsLegacy(session, { limit });
 };
 
 export const getRun = async ({ runId }) => {
-  const session = ensureSession();
+  const session = ensureTargetSession();
   const [{ actions, source }, { run }] = await Promise.all([
     getRunActionsLegacy(session, runId),
     getRunLegacy(session, runId),
@@ -603,14 +1026,19 @@ export const getRun = async ({ runId }) => {
 };
 
 export const getRunActions = async ({ runId }) => {
-  const session = ensureSession();
+  const session = ensureTargetSession();
   return getRunActionsLegacy(session, runId);
 };
 
 export const getLatestRun = async () => {
-  const session = ensureSession();
+  const session = ensureTargetSession();
   const { runs, source } = await listRunsLegacy(session, { limit: 1 });
-  const run = runs[0] || null;
+  let run = runs[0] || null;
+
+  if (run?.runId) {
+    const detail = await getRun({ runId: run.runId });
+    run = detail.run;
+  }
 
   return {
     run,
@@ -619,7 +1047,7 @@ export const getLatestRun = async () => {
 };
 
 export const refreshLatestRun = async () => {
-  const session = ensureSession();
+  const session = ensureTargetSession();
   const latest = await getLatestRun();
 
   const payload = {
@@ -633,10 +1061,19 @@ export const refreshLatestRun = async () => {
   return payload;
 };
 
-export const getLastRunSummary = () => getLastRun();
+export const getLastRunSummary = () => {
+  const session = getSession();
+
+  if (!session) {
+    return getLastRun();
+  }
+
+  const target = getActiveOrTabTarget(session);
+  return target ? getLastRunForFlow(target) || getLastRun() : getLastRun();
+};
 
 export const waitForRun = async ({ pollIntervalSeconds = 5, runId, timeoutSeconds = 60 } = {}) => {
-  const session = ensureSession();
+  const session = ensureTargetSession();
   const deadline = Date.now() + timeoutSeconds * 1000;
   let targetRunId = runId;
 
@@ -679,7 +1116,7 @@ export const waitForRun = async ({ pollIntervalSeconds = 5, runId, timeoutSecond
 };
 
 export const getTriggerCallbackUrl = async ({ triggerName } = {}) => {
-  const session = ensureSession();
+  const session = ensureTargetSession();
   const legacySession = getPreferredLegacySession(session);
 
   if (!legacySession) {
