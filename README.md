@@ -40,6 +40,26 @@ If this project helps you operate Power Automate faster, give the repo a star:
 
 - https://github.com/kaael1/mcp-power-automate
 
+## Distribution
+
+This repo is prepared for three distribution paths:
+
+- GitHub repo for discovery, docs, and stars
+- `skills.sh` / Vercel-style install directly from GitHub
+- Official MCP Registry via npm + `server.json`
+
+Skill discovery test:
+
+```bash
+npx skills add kaael1/mcp-power-automate --list
+```
+
+Registry packaging files:
+
+- [`package.json`](package.json)
+- [`server.json`](server.json)
+- [`PUBLISHING.md`](PUBLISHING.md)
+
 ## What it is
 
 The project has three pieces:
@@ -126,6 +146,19 @@ Then verify:
 
 ```powershell
 codex mcp list
+```
+
+Once the npm package is published, a registry-friendly form can use:
+
+```json
+{
+  "mcpServers": {
+    "power-automate-local": {
+      "command": "npx",
+      "args": ["-y", "@kaael1/mcp-power-automate"]
+    }
+  }
+}
 ```
 
 ## Register the skill in Codex

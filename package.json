@@ -1,16 +1,50 @@
 {
-  "name": "mcp-power-automate",
-  "version": "0.1.0",
-  "private": true,
+  "name": "@kaael1/mcp-power-automate",
+  "version": "0.2.0",
+  "private": false,
   "type": "module",
-  "description": "A local MCP server plus browser extension bridge for editing the current Power Automate flow.",
+  "description": "Local Power Automate MCP server, browser extension, and installable Codex skill.",
+  "mcpName": "io.github.kaael1/mcp-power-automate",
+  "bin": "./server/index.mjs",
+  "files": [
+    "assets",
+    "extension",
+    "server",
+    "skills",
+    "AGENTS.md",
+    "LICENSE",
+    "README.md",
+    "server.json"
+  ],
   "scripts": {
     "start": "node server/index.mjs",
-    "dev": "node --watch server/index.mjs"
+    "dev": "node --watch server/index.mjs",
+    "pack:dry-run": "npm pack --dry-run"
   },
   "engines": {
     "node": ">=20"
   },
+  "publishConfig": {
+    "access": "public"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/kaael1/mcp-power-automate.git"
+  },
+  "bugs": {
+    "url": "https://github.com/kaael1/mcp-power-automate/issues"
+  },
+  "homepage": "https://github.com/kaael1/mcp-power-automate#readme",
+  "license": "MIT",
+  "keywords": [
+    "automation",
+    "browser-extension",
+    "codex",
+    "mcp",
+    "model-context-protocol",
+    "power-automate",
+    "skills"
+  ],
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.29.0",
     "zod": "^3.25.76"

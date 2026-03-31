@@ -1,3 +1,4 @@
+#!/usr/bin/env node
 import http from 'node:http';
 
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
