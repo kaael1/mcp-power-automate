@@ -13,6 +13,7 @@ import { loadLastUpdate, getLastUpdate } from './update-history-store.mjs';
 import { createMcpApp } from './tools.mjs';
 
 const mcpServer = createMcpApp();
+let ownsBridgeServer = false;
 
 const sendJson = (response, statusCode, payload) => {
   response.writeHead(statusCode, {
@@ -49,6 +50,7 @@ const createHealthPayload = () => {
 
   return {
     capturedAt: session?.capturedAt || null,
+    bridgeMode: ownsBridgeServer ? 'owned' : 'reused',
     hasLastUpdate: Boolean(lastUpdate),
     hasLastRun: Boolean(lastRun?.run),
     hasSnapshot: Boolean(snapshot),
@@ -183,10 +185,51 @@ const listen = (httpServer, host, port) =>
     });
   });
 
-const closeHttpServer = async () =>
-  new Promise((resolve) => {
+const closeHttpServer = async () => {
+  if (!ownsBridgeServer) return;
+
+  await new Promise((resolve) => {
     bridgeServer.close(() => resolve());
   });
+};
+
+const getBridgeHealthUrl = () => `http://${bridgeHost}:${bridgePort}/health`;
+
+const probeExistingBridge = async () => {
+  try {
+    const response = await fetch(getBridgeHealthUrl());
+
+    if (!response.ok) return null;
+
+    const body = await response.json();
+    return body?.ok ? body : null;
+  } catch {
+    return null;
+  }
+};
+
+const ensureBridgeServer = async () => {
+  try {
+    await listen(bridgeServer, bridgeHost, bridgePort);
+    ownsBridgeServer = true;
+    return { mode: 'owned' };
+  } catch (error) {
+    if (error?.code !== 'EADDRINUSE') {
+      throw error;
+    }
+
+    const healthyBridge = await probeExistingBridge();
+
+    if (healthyBridge) {
+      ownsBridgeServer = false;
+      return { mode: 'reused', health: healthyBridge };
+    }
+
+    throw new Error(
+      `Bridge port ${bridgePort} is already in use, but no healthy bridge answered on ${getBridgeHealthUrl()}. Stop the stale process or choose another POWER_AUTOMATE_BRIDGE_PORT.`,
+    );
+  }
+};
 
 const main = async () => {
   await loadSession();
@@ -194,7 +237,7 @@ const main = async () => {
   await loadLastRun();
   await loadTokenAudit();
   await loadLastUpdate();
-  await listen(bridgeServer, bridgeHost, bridgePort);
+  await ensureBridgeServer();
 
   const transport = new StdioServerTransport();
   await mcpServer.connect(transport);

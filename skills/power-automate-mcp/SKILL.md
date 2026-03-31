@@ -177,3 +177,13 @@ Before using it on critical flows, prefer adding:
 - deeper version history
 - richer diffs before save
 - stricter confirmation policy for writes
+
+## Troubleshooting
+
+If the MCP looks installed but tools do not appear or the session behaves inconsistently:
+
+1. Check the local bridge health at `http://127.0.0.1:17373/health`.
+2. Confirm the browser extension popup shows the expected `Env ID` and `Flow ID`.
+3. Refresh the Power Automate tab after reloading the extension.
+4. If port `17373` is busy, prefer reusing the healthy bridge instead of starting another manual copy.
+5. If the bridge is unhealthy, stop the stale process and start a fresh session.
