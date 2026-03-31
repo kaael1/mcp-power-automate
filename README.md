@@ -111,6 +111,7 @@ This repo keeps the skill in the same repository as the MCP on purpose so the in
 ## Available MCP tools
 
 - `get_status`
+- `get_health`
 - `get_flow`
 - `update_flow`
 - `validate_flow`
@@ -124,6 +125,11 @@ This repo keeps the skill in the same repository as the MCP on purpose so the in
 - `get_last_run`
 - `get_trigger_callback_url`
 - `invoke_trigger`
+
+## Available resources
+
+- `power-automate://status`
+- `power-automate://last-run`
 
 ## Typical workflow
 

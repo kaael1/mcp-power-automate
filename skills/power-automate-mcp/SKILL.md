@@ -107,6 +107,9 @@ Steps:
 - `get_status`
   Confirms the active flow, environment, and whether legacy access is available.
 
+- `get_health`
+  Returns a compact troubleshooting payload with current status plus cached run and update summaries.
+
 - `get_flow`
   Returns the normalized flow payload for analysis or editing.
 

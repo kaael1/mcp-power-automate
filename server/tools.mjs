@@ -36,11 +36,66 @@ const createErrorResult = (error) => ({
   isError: true,
 });
 
+const buildHealthPayload = () => ({
+  lastRun: getLastRunSummary(),
+  lastUpdate: getLastUpdateSummary(),
+  status: getStatus(),
+});
+
+const createJsonResource = (uri, payload) => ({
+  contents: [
+    {
+      mimeType: 'application/json',
+      text: JSON.stringify(payload, null, 2),
+      uri,
+    },
+  ],
+});
+
 export const createMcpApp = () => {
   const server = new McpServer({
     name: 'power-automate-local',
     version: '0.1.0',
   });
+
+  server.registerResource(
+    'power-automate-status',
+    'power-automate://status',
+    {
+      description: 'Current active flow status and cached bridge summaries.',
+      mimeType: 'application/json',
+      title: 'Power Automate Status',
+    },
+    async () => createJsonResource('power-automate://status', buildHealthPayload()),
+  );
+
+  server.registerResource(
+    'power-automate-last-run',
+    'power-automate://last-run',
+    {
+      description: 'Last cached run summary for the active flow.',
+      mimeType: 'application/json',
+      title: 'Power Automate Last Run',
+    },
+    async () =>
+      createJsonResource('power-automate://last-run', {
+        lastRun: getLastRunSummary(),
+      }),
+  );
+
+  server.registerTool(
+    'get_health',
+    {
+      description: 'Return the current flow status plus cached run and update summaries for troubleshooting.',
+    },
+    async () => {
+      try {
+        return createTextResult(buildHealthPayload());
+      } catch (error) {
+        return createErrorResult(error);
+      }
+    },
+  );
 
   server.registerTool(
     'get_status',
