@@ -6,149 +6,118 @@
 
 <p align="center">
   <a href="https://github.com/kaael1/mcp-power-automate/stargazers"><img alt="GitHub stars" src="https://img.shields.io/github/stars/kaael1/mcp-power-automate?style=flat-square" /></a>
+  <a href="https://www.npmjs.com/package/@kaael1/mcp-power-automate"><img alt="npm version" src="https://img.shields.io/npm/v/%40kaael1%2Fmcp-power-automate?style=flat-square" /></a>
   <a href="https://github.com/kaael1/mcp-power-automate/blob/main/LICENSE"><img alt="MIT License" src="https://img.shields.io/badge/license-MIT-0f172a?style=flat-square" /></a>
   <a href="https://skills.sh/"><img alt="skills.sh compatible" src="https://img.shields.io/badge/skills.sh-compatible-111827?style=flat-square" /></a>
+  <a href="https://registry.modelcontextprotocol.io/v0/servers?search=io.github.kaael1/mcp-power-automate"><img alt="Official MCP Registry" src="https://img.shields.io/badge/MCP%20Registry-published-2563eb?style=flat-square" /></a>
 </p>
 
-Local MCP server plus a Chromium extension bridge for operating Power Automate flows through Codex.
+Local MCP server, Chromium extension, and installable skill for operating Microsoft Power Automate flows through Codex.
 
-This project lets a Codex agent:
+This project lets an agent:
 
-- inspect flows in the current environment
+- list flows from the current environment, including owned and shared-visible flows
 - select an explicit target flow instead of following the active tab
-- validate and update flow definitions
-- create and clone flows
-- keep a one-step rollback history
-- invoke request/manual flows
-- inspect run history and action-level results
+- read, validate, update, create, clone, test, inspect runs, and revert flows
+- use the browser only for auth and visual context while the MCP owns the workflow logic
 
-## Quick install
+## Install in 60 seconds
 
-Install the skill from the public GitHub repo:
+Install the skill from GitHub:
 
 ```bash
 npx skills add kaael1/mcp-power-automate --skill power-automate-mcp
 ```
 
-Then register the MCP locally:
+Register the MCP locally:
 
 ```powershell
-codex mcp add power-automate-local -- node /path/to/mcp-power-automate/server/index.mjs
+codex mcp add power-automate-local -- npx -y @kaael1/mcp-power-automate
 ```
 
-If this project helps you operate Power Automate faster, give the repo a star:
-
-- https://github.com/kaael1/mcp-power-automate
-
-## Distribution
-
-This repo is prepared for three distribution paths:
-
-- GitHub repo for discovery, docs, and stars
-- `skills.sh` / Vercel-style install directly from GitHub
-- Official MCP Registry via npm + `server.json`
-
-Skill discovery test:
-
-```bash
-npx skills add kaael1/mcp-power-automate --list
-```
-
-Registry packaging files:
-
-- [`package.json`](package.json)
-- [`server.json`](server.json)
-- [`PUBLISHING.md`](PUBLISHING.md)
-
-## What it is
-
-The project has three pieces:
-
-- `server/`
-  Local MCP server plus an HTTP bridge on `127.0.0.1:17373`
-- `extension/`
-  Chromium unpacked extension that captures Power Automate browser context, session tokens, snapshots, and metadata
-- `skills/power-automate-mcp/`
-  Codex skill that teaches the agent how to use the MCP safely
-
-## Current capabilities
-
-- Read the active flow from the browser-backed session
-- List flows from the current environment
-- Merge owned and shared-visible flows into one environment catalog
-- Select which flow is the active MCP target
-- Validate the active flow
-- Update the active flow
-- Create a new blank request or recurrence flow
-- Clone an existing flow
-- Revert the last saved change
-- List recent runs for the active flow
-- Read run details and action statuses
-- Wait for a run to complete
-- Get a callback URL for a manual/request trigger
-- Invoke a manual/request trigger with a test payload
-
-## Current limitations
-
-- The browser still provides auth and current-tab context
-- The MCP now operates on an explicit selected target flow inside the current environment
-- The system depends on a logged-in Chromium session
-- Rollback is currently one step only
-- The extension popup shows summaries, not a full diff UI
-- Production use is best done with supervision and change discipline
-
-## Project layout
-
-```text
-mcp-power-automate/
-|- extension/
-|- server/
-|- skills/
-|  `- power-automate-mcp/
-`- data/
-```
-
-## Install
-
-```powershell
-cd /path/to/mcp-power-automate
-bun install
-```
-
-## Start the local bridge
-
-```powershell
-cd /path/to/mcp-power-automate
-bun run start
-```
-
-The process provides:
-
-- MCP over `stdio`
-- local bridge over `http://127.0.0.1:17373`
-
-## Load the browser extension
+Load the extension:
 
 1. Open `chrome://extensions` or `edge://extensions`
 2. Enable Developer Mode
 3. Click `Load unpacked`
 4. Select the `extension` folder in this repo
 
-## Register the MCP in Codex CLI
+Open Power Automate, refresh any flow page, and ask Codex to:
 
-You can register it with:
+1. `list_flows`
+2. `set_active_flow`
+3. `get_flow`
 
-```powershell
-codex mcp add power-automate-local -- node /path/to/mcp-power-automate/server/index.mjs
+If this saves you time, star the repo:
+
+- https://github.com/kaael1/mcp-power-automate
+
+## Public package and registry links
+
+- GitHub: https://github.com/kaael1/mcp-power-automate
+- npm: https://www.npmjs.com/package/@kaael1/mcp-power-automate
+- Official MCP Registry: https://registry.modelcontextprotocol.io/v0/servers?search=io.github.kaael1/mcp-power-automate
+- skills.sh discovery: https://skills.sh/
+
+## How it works
+
+<p align="center">
+  <img src="./assets/architecture.svg" alt="Architecture overview for MCP Power Automate" width="100%" />
+</p>
+
+The project has three pieces:
+
+- `server/`
+  Local MCP server plus an HTTP bridge on `127.0.0.1:17373`
+- `extension/`
+  Chromium extension that captures browser auth, tab flow context, token audit, and snapshots
+- `skills/power-automate-mcp/`
+  Skill instructions that teach the agent to work safely with explicit flow targeting
+
+## Why this is local
+
+This project is intentionally local-first.
+
+- Your browser session remains the auth source
+- The extension captures the environment and tab context you already trust
+- The MCP runs on your machine and talks to Power Automate with your browser-backed session
+- The selected target flow is explicit, so the agent does not blindly follow whichever tab is active
+
+This gives you a good tradeoff:
+
+- much more agent autonomy than manual clicking
+- much less infrastructure and auth complexity than a remote SaaS MCP
+
+## Current capabilities
+
+- Read the selected target flow
+- List flows from the current environment
+- Merge `owned`, `shared-user`, and `portal-shared` flows into one catalog
+- Lock the MCP onto an explicit active target flow
+- Validate flows with legacy validation endpoints
+- Update a flow and keep one-step rollback history
+- Create a blank request or recurrence flow
+- Clone an existing flow
+- List runs, inspect action-level results, and wait for completion
+- Get a callback URL and invoke manual/request flows
+
+## Install options
+
+### 1. Skill install from GitHub
+
+```bash
+npx skills add kaael1/mcp-power-automate --skill power-automate-mcp
 ```
 
-Then verify:
+You can verify discovery with:
 
-```powershell
-codex mcp list
+```bash
+npx skills add kaael1/mcp-power-automate --list
 ```
 
-Once the npm package is published, a registry-friendly form can use:
+### 2. MCP install from npm
+
+Use this in Codex-compatible config:
 
 ```json
 {
@@ -161,23 +130,34 @@ Once the npm package is published, a registry-friendly form can use:
 }
 ```
 
-## Register the skill in Codex
+### 3. MCP install from local clone
 
-Add this to `~/.codex/config.toml`:
-
-```toml
-[[skills.config]]
-path = '/path/to/mcp-power-automate/skills/power-automate-mcp/SKILL.md'
-enabled = true
+```powershell
+codex mcp add power-automate-local -- node /path/to/mcp-power-automate/server/index.mjs
 ```
 
-This repo keeps the skill in the same repository as the MCP on purpose so the instructions and tools stay in sync.
+## Typical workflow
 
-You can also install the skill directly from GitHub through the skills ecosystem:
+1. Start the local bridge and MCP.
+2. Open any flow in the target Power Automate environment.
+3. Let the extension capture auth and environment context.
+4. Ask Codex to `list_flows`.
+5. Ask Codex to `set_active_flow` for the flow you actually want.
+6. Continue with `get_flow`, `validate_flow`, `update_flow`, `list_runs`, `get_run`, `wait_for_run`, or `invoke_trigger`.
 
-```bash
-npx skills add kaael1/mcp-power-automate --skill power-automate-mcp
-```
+The popup helps you:
+
+- compare the selected target flow with the current tab flow
+- switch the selected target to the current tab
+- refresh run status
+- review the last update summary
+- revert the last saved change
+
+`list_flows` returns an `accessScope` hint per flow:
+
+- `owned`
+- `shared-user`
+- `portal-shared`
 
 ## Available MCP tools
 
@@ -210,68 +190,42 @@ npx skills add kaael1/mcp-power-automate --skill power-automate-mcp
 - `power-automate://last-run`
 - `power-automate://active-flow`
 
-## Typical workflow
+## Security model
 
-1. Start the bridge
-2. Open any flow in the target Power Automate environment so the extension can capture auth and environment context
-3. Ask Codex to `list_flows` and `set_active_flow`
-4. Ask Codex to:
-   - `list_flows`
-   - `get_flow`
-   - `validate_flow`
-   - `update_flow`
-   - `create_flow` or `clone_flow`
-   - `list_runs` or `get_latest_run`
-   - `invoke_trigger` for manual flows
-5. Use the popup to:
-    - refresh the current tab
-    - compare the selected target flow with the current tab flow
-    - switch the selected target to the current tab when desired
-    - refresh the latest run status
-    - review the last update summary
-    - revert the last saved change
+This MCP is not a remote cloud service.
 
-`list_flows` now returns an `accessScope` classification per flow:
+- It depends on a logged-in Chromium session
+- It uses browser-backed tokens captured locally by the extension
+- It is best suited for trusted local use
+- It is strong enough for supervised real work, but still benefits from change discipline on production flows
 
-- `owned`
-- `shared-user`
-- `portal-shared`
+## Current limitations
 
-## Recommended release posture
+- The browser still provides auth and current-tab context
+- Rollback is currently one step only
+- The popup shows summaries, not a full diff UI
+- The current architecture is local-first, not remote SaaS-style
+- Critical production use is still best done with supervision
 
-Good fit today:
+## Publishing
 
-- test flows
-- staging flows
-- supervised production changes
-- iterative flow design with validation and rollback
+This repo is already prepared for:
 
-Not yet ideal for fully unsupervised critical production automation:
+- GitHub discovery
+- `skills.sh` / Vercel-style skill installation
+- npm distribution
+- Official MCP Registry publishing
 
-- no multi-version rollback history
-- no hard target-flow lock yet
-- no full visual diff UI
+Relevant files:
 
-## Skill
+- [`package.json`](package.json)
+- [`server.json`](server.json)
+- [`PUBLISHING.md`](PUBLISHING.md)
 
-The included skill lives at:
-
-```text
-skills/power-automate-mcp/SKILL.md
-```
-
-It documents:
-
-- safe edit workflow
-- safe test workflow
-- run inspection workflow
-- rollback workflow
-- practical limitations
-
-## Repo instructions
+## Repo guidance
 
 See [`AGENTS.md`](AGENTS.md) for local repository guidance for agents and contributors.
 
 ## License
 
-This project is licensed under the MIT License. See [`LICENSE`](LICENSE).
+MIT. See [`LICENSE`](LICENSE).
