@@ -4,6 +4,12 @@
 
 # MCP Power Automate
 
+<p align="center">
+  <a href="https://github.com/kaael1/mcp-power-automate/stargazers"><img alt="GitHub stars" src="https://img.shields.io/github/stars/kaael1/mcp-power-automate?style=flat-square" /></a>
+  <a href="https://github.com/kaael1/mcp-power-automate/blob/main/LICENSE"><img alt="MIT License" src="https://img.shields.io/badge/license-MIT-0f172a?style=flat-square" /></a>
+  <a href="https://skills.sh/"><img alt="skills.sh compatible" src="https://img.shields.io/badge/skills.sh-compatible-111827?style=flat-square" /></a>
+</p>
+
 Local MCP server plus a Chromium extension bridge for operating Power Automate flows through Codex.
 
 This project lets a Codex agent:
@@ -15,6 +21,24 @@ This project lets a Codex agent:
 - keep a one-step rollback history
 - invoke request/manual flows
 - inspect run history and action-level results
+
+## Quick install
+
+Install the skill from the public GitHub repo:
+
+```bash
+npx skills add kaael1/mcp-power-automate --skill power-automate-mcp
+```
+
+Then register the MCP locally:
+
+```powershell
+codex mcp add power-automate-local -- node /path/to/mcp-power-automate/server/index.mjs
+```
+
+If this project helps you operate Power Automate faster, give the repo a star:
+
+- https://github.com/kaael1/mcp-power-automate
 
 ## What it is
 
@@ -115,6 +139,12 @@ enabled = true
 ```
 
 This repo keeps the skill in the same repository as the MCP on purpose so the instructions and tools stay in sync.
+
+You can also install the skill directly from GitHub through the skills ecosystem:
+
+```bash
+npx skills add kaael1/mcp-power-automate --skill power-automate-mcp
+```
 
 ## Available MCP tools
 
