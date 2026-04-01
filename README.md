@@ -12,7 +12,10 @@
   <a href="https://registry.modelcontextprotocol.io/v0/servers?search=io.github.kaael1/mcp-power-automate"><img alt="Official MCP Registry" src="https://img.shields.io/badge/MCP%20Registry-published-2563eb?style=flat-square" /></a>
 </p>
 
-Local MCP server, Chromium extension, and installable skill for operating Microsoft Power Automate flows through Codex.
+Local MCP server, Chromium extension, and optional Codex skill for operating Microsoft Power Automate flows from a local browser-backed session.
+
+> No Microsoft Entra ID app registration, admin consent, or custom enterprise app setup is required.
+> This MCP uses your existing logged-in browser session instead, which is often much easier to adopt inside locked-down companies.
 
 This project lets an agent:
 
@@ -21,9 +24,14 @@ This project lets an agent:
 - read, validate, update, create, clone, test, inspect runs, and revert flows
 - use the browser only for auth and visual context while the MCP owns the workflow logic
 
+The server is MCP-client agnostic.
+
+- Use the MCP from Codex, Claude clients, Gemini clients, OpenCode, or any other MCP client that supports local `stdio` servers.
+- The bundled `power-automate-mcp` skill in this repository is Codex-specific helper guidance, not a requirement for the MCP itself.
+
 ## Install in 60 seconds
 
-Install the skill from GitHub:
+Install the optional Codex skill from GitHub:
 
 ```bash
 npx skills add kaael1/mcp-power-automate --skill power-automate-mcp
@@ -39,10 +47,11 @@ Load the extension:
 
 1. Open `chrome://extensions` or `edge://extensions`
 2. Enable Developer Mode
-3. Click `Load unpacked`
-4. Select the `extension` folder in this repo
+3. If you are working from a clone, run `bun install` and `bun run build`
+4. Click `Load unpacked`
+5. Select the `dist/extension` folder
 
-Open Power Automate, refresh any flow page, and ask Codex to:
+Open Power Automate, refresh any flow page, and ask your MCP client to:
 
 1. `list_flows`
 2. `set_active_flow`
@@ -68,17 +77,20 @@ If this saves you time, star the repo:
 The project has three pieces:
 
 - `server/`
-  Local MCP server plus an HTTP bridge on `127.0.0.1:17373`
+  TypeScript source for the local MCP server plus an HTTP bridge on `127.0.0.1:17373`
 - `extension/`
-  Chromium extension that captures browser auth, tab flow context, token audit, and snapshots
+  TypeScript source for the Chromium extension that captures browser auth, tab flow context, token audit, and snapshots
+- `dist/`
+  Compiled runtime artifacts used for local loading and npm publishing
 - `skills/power-automate-mcp/`
-  Skill instructions that teach the agent to work safely with explicit flow targeting
+  Optional Codex-specific skill instructions that teach the agent to work safely with explicit flow targeting
 
 ## Why this is local
 
 This project is intentionally local-first.
 
 - Your browser session remains the auth source
+- You do not need to provision a Microsoft Entra ID app just to use the MCP
 - The extension captures the environment and tab context you already trust
 - The MCP runs on your machine and talks to Power Automate with your browser-backed session
 - The selected target flow is explicit, so the agent does not blindly follow whichever tab is active
@@ -133,7 +145,19 @@ Use this in Codex-compatible config:
 ### 3. MCP install from local clone
 
 ```powershell
-codex mcp add power-automate-local -- node /path/to/mcp-power-automate/server/index.mjs
+bun install
+bun run build
+codex mcp add power-automate-local -- node /path/to/mcp-power-automate/dist/server/index.js
+```
+
+## Development checks
+
+```bash
+bun run typecheck
+bun run lint
+bun run test
+bun run build
+bun run check
 ```
 
 ## Typical workflow
@@ -145,13 +169,14 @@ codex mcp add power-automate-local -- node /path/to/mcp-power-automate/server/in
 5. Ask Codex to `set_active_flow` for the flow you actually want.
 6. Continue with `get_flow`, `validate_flow`, `update_flow`, `list_runs`, `get_run`, `wait_for_run`, or `invoke_trigger`.
 
-The popup helps you:
+The popup and side panel help you:
 
 - compare the selected target flow with the current tab flow
 - switch the selected target to the current tab
 - refresh run status
 - review the last update summary
 - revert the last saved change
+- browse pinned, recent, and current-environment flows from a daily cockpit view
 
 `list_flows` returns an `accessScope` hint per flow:
 
@@ -203,7 +228,7 @@ This MCP is not a remote cloud service.
 
 - The browser still provides auth and current-tab context
 - Rollback is currently one step only
-- The popup shows summaries, not a full diff UI
+- The extension focuses on operational context and safe actions, not a full diff editor
 - The current architecture is local-first, not remote SaaS-style
 - Critical production use is still best done with supervision
 
@@ -221,6 +246,26 @@ Relevant files:
 - [`package.json`](package.json)
 - [`server.json`](server.json)
 - [`PUBLISHING.md`](PUBLISHING.md)
+- [`CHANGELOG.md`](CHANGELOG.md)
+
+## Client compatibility
+
+The MCP server itself is designed around standard local `stdio` transport, so it is not tied to Codex.
+
+- Codex: supported directly, and the bundled skill is written for Codex.
+- Claude clients with MCP support: should work with the MCP server directly.
+- Gemini clients with MCP support: should work with the MCP server directly.
+- Other MCP clients such as OpenCode: should work as long as they support local `stdio` MCP servers.
+
+What is client-specific:
+
+- the `skills/power-automate-mcp` skill is Codex-oriented guidance
+- the browser extension UX is generic, but any prompt helpers or slash-command conventions depend on the client
+
+The safe rule of thumb is:
+
+- if the client can launch a local `stdio` MCP server, it can use this MCP server
+- if the client understands Codex skills, it can also use the bundled skill directly
 
 ## Repo guidance
 

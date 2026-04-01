@@ -22,7 +22,7 @@ import {
   updateCurrentFlow,
   validateCurrentFlow,
   waitForRun,
-} from './power-automate-client.mjs';
+} from './power-automate-client.js';
 import {
   cloneFlowInputSchema,
   createFlowInputSchema,
@@ -35,15 +35,15 @@ import {
   updateFlowInputSchema,
   validateFlowInputSchema,
   waitForRunInputSchema,
-} from './schemas.mjs';
+} from './schemas.js';
 
-const createTextResult = (payload) => ({
-  content: [{ type: 'text', text: JSON.stringify(payload, null, 2) }],
+const createTextResult = <T>(payload: T) => ({
+  content: [{ type: 'text' as const, text: JSON.stringify(payload, null, 2) }],
   structuredContent: payload,
 });
 
-const createErrorResult = (error) => ({
-  content: [{ type: 'text', text: error instanceof Error ? error.message : String(error) }],
+const createErrorResult = (error: unknown) => ({
+  content: [{ type: 'text' as const, text: error instanceof Error ? error.message : String(error) }],
   isError: true,
 });
 
@@ -58,7 +58,7 @@ const buildHealthPayload = () => {
   };
 };
 
-const createJsonResource = (uri, payload) => ({
+const createJsonResource = (uri: string, payload: unknown) => ({
   contents: [
     {
       mimeType: 'application/json',
@@ -71,7 +71,7 @@ const createJsonResource = (uri, payload) => ({
 export const createMcpApp = () => {
   const server = new McpServer({
     name: 'power-automate-local',
-    version: '0.1.0',
+    version: '0.2.0',
   });
 
   server.registerResource(

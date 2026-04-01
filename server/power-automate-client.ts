@@ -1,25 +1,81 @@
-import { getActiveTarget, saveActiveTarget } from './active-target-store.mjs';
-import { getFlowCatalogForEnv, saveFlowCatalog } from './flow-catalog-store.mjs';
-import { getFlowSnapshot, getFlowSnapshotForFlow } from './flow-snapshot-store.mjs';
-import { getLastRun, getLastRunForFlow, saveLastRun } from './last-run-store.mjs';
-import { getLastUpdate, getLastUpdateForFlow, saveLastUpdate } from './update-history-store.mjs';
-import { editorSchema } from './schemas.mjs';
-import { getSession } from './session-store.mjs';
-import { getTokenAudit } from './token-audit-store.mjs';
+import { getActiveTarget, saveActiveTarget } from './active-target-store.js';
+import {
+  buildRequestUrl,
+  createLastUpdateRecord,
+  extractNameFromId,
+  filterCatalogFlows,
+  mergeCatalogItems,
+  normalizeIssues,
+  sleep,
+  TERMINAL_RUN_STATUSES,
+  withFailedAction,
+} from './client-helpers.js';
+import { getFlowCatalogForEnv, saveFlowCatalog } from './flow-catalog-store.js';
+import { getFlowSnapshot, getFlowSnapshotForFlow } from './flow-snapshot-store.js';
+import { getLastRun, getLastRunForFlow, saveLastRun } from './last-run-store.js';
+import type {
+  ActiveTarget,
+  CloneFlowInput,
+  CreateFlowInput,
+  FlowCatalog,
+  FlowCatalogItem,
+  FlowContent,
+  LastRun,
+  LastUpdate,
+  ListFlowsInput,
+  ListRunsInput,
+  NormalizedFlow,
+  RunSummary,
+  SelectionSource,
+  Session,
+  TriggerCallbackInput,
+  UpdateFlowInput,
+  ValidateFlowInput,
+  WaitForRunInput,
+} from './schemas.js';
+import { editorSchema } from './schemas.js';
+import { getSession } from './session-store.js';
+import { getTokenAudit } from './token-audit-store.js';
+import { getLastUpdate, getLastUpdateForFlow, saveLastUpdate } from './update-history-store.js';
 
 const MODERN_API_VERSION = '1';
 const LEGACY_API_VERSION = '2016-11-01';
 const LEGACY_FLOW_BASE_URL = 'https://api.flow.microsoft.com/';
-const TERMINAL_RUN_STATUSES = new Set(['cancelled', 'canceled', 'failed', 'skipped', 'succeeded', 'timedout']);
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+type AnyRecord = Record<string, any>;
+
+interface PreferredLegacySession {
+  baseUrl: string;
+  source: string;
+  token: string;
+}
+
+type TargetSession = Session & {
+  flowId: string;
+  targetDisplayName: string | null;
+  targetSelectedAt: string;
+  targetSelectionSource: SelectionSource;
+};
+
+type RunActionSummary = {
+  code: string | null;
+  endTime: string | null;
+  errorMessage: string | null;
+  name: string | null;
+  startTime: string | null;
+  status: string | null;
+  type: string | null;
+};
 
 export class PowerAutomateSessionError extends Error {
-  constructor(message) {
+  constructor(message: string) {
     super(message);
     this.name = 'PowerAutomateSessionError';
   }
 }
 
-const ensureSession = () => {
+const ensureSession = (): Session => {
   const session = getSession();
 
   if (!session) {
@@ -31,8 +87,8 @@ const ensureSession = () => {
   return session;
 };
 
-const createTabTargetFromSession = (session) => {
-  if (!session?.flowId) return null;
+const createTabTargetFromSession = (session: Session): ActiveTarget | null => {
+  if (!session.flowId) return null;
 
   return {
     displayName: null,
@@ -43,7 +99,7 @@ const createTabTargetFromSession = (session) => {
   };
 };
 
-const getActiveOrTabTarget = (session) => {
+const getActiveOrTabTarget = (session: Session): ActiveTarget | null => {
   const activeTarget = getActiveTarget();
 
   if (activeTarget?.envId === session.envId) {
@@ -53,7 +109,7 @@ const getActiveOrTabTarget = (session) => {
   return createTabTargetFromSession(session);
 };
 
-const ensureTargetSession = () => {
+const ensureTargetSession = (): TargetSession => {
   const session = ensureSession();
   const target = getActiveOrTabTarget(session);
 
@@ -72,15 +128,7 @@ const ensureTargetSession = () => {
   };
 };
 
-const ensureTrailingSlash = (value) => (value.endsWith('/') ? value : `${value}/`);
-
-const buildRequestUrl = (baseUrl, resourcePath, apiVersion) => {
-  const url = new URL(resourcePath, ensureTrailingSlash(baseUrl));
-  url.searchParams.set('api-version', apiVersion);
-  return url;
-};
-
-const readResponseBody = async (response) => {
+const readResponseBody = async (response: Response): Promise<unknown> => {
   const text = await response.text();
 
   if (!text) return null;
@@ -92,23 +140,38 @@ const readResponseBody = async (response) => {
   }
 };
 
-const toApiError = (response, body) => {
+const toApiError = (response: Response, body: unknown) => {
   if (response.status === 401 || response.status === 403) {
     return new PowerAutomateSessionError(
       'The captured Power Automate session is expired or invalid. Reopen or refresh the flow in the browser to capture a fresh token.',
     );
   }
 
+  const parsedBody = body as AnyRecord | string | null;
   const message =
-    body?.error?.message ||
-    body?.message ||
-    (typeof body === 'string' && body) ||
+    (parsedBody as AnyRecord | null)?.error?.message ||
+    (parsedBody as AnyRecord | null)?.message ||
+    (typeof parsedBody === 'string' && parsedBody) ||
     `Power Automate API request failed with ${response.status} ${response.statusText}.`;
 
   return new Error(message);
 };
 
-const requestJson = async ({ apiVersion, baseUrl, body, method = 'GET', resourcePath, token }) => {
+const requestJson = async <T = AnyRecord>({
+  apiVersion,
+  baseUrl,
+  body,
+  method = 'GET',
+  resourcePath,
+  token,
+}: {
+  apiVersion: string;
+  baseUrl: string;
+  body?: unknown;
+  method?: string;
+  resourcePath: string;
+  token: string;
+}) => {
   const requestUrl = buildRequestUrl(baseUrl, resourcePath, apiVersion);
   const response = await fetch(requestUrl, {
     body: body ? JSON.stringify(body) : undefined,
@@ -124,18 +187,18 @@ const requestJson = async ({ apiVersion, baseUrl, body, method = 'GET', resource
     throw toApiError(response, parsedBody);
   }
 
-  return parsedBody;
+  return parsedBody as T;
 };
 
-const getCurrentFlowResourcePath = (flowId) => `powerautomate/flows/${flowId}`;
+const getCurrentFlowResourcePath = (flowId: string) => `powerautomate/flows/${flowId}`;
 
-const getLegacyFlowBasePath = (envId, flowId) =>
+const getLegacyFlowBasePath = (envId: string, flowId: string) =>
   `providers/Microsoft.ProcessSimple/environments/${envId}/flows/${flowId}`;
 
-const getLegacyFlowsCollectionPath = (envId) =>
+const getLegacyFlowsCollectionPath = (envId: string) =>
   `providers/Microsoft.ProcessSimple/environments/${envId}/flows`;
 
-const getPreferredLegacySession = (session) => {
+const getPreferredLegacySession = (session: Session): PreferredLegacySession | null => {
   if (session.legacyApiUrl && session.legacyToken) {
     return {
       baseUrl: session.legacyApiUrl,
@@ -158,7 +221,7 @@ const getPreferredLegacySession = (session) => {
   };
 };
 
-const normalizeFlow = (session, flowResponse) => {
+const normalizeFlow = (session: Pick<Session, 'envId' | 'flowId'>, flowResponse: AnyRecord): NormalizedFlow => {
   const properties = flowResponse?.properties || {};
 
   return {
@@ -174,31 +237,38 @@ const normalizeFlow = (session, flowResponse) => {
   };
 };
 
-const normalizeFlowCatalogItem = (session, flowResponse, accessScope = 'owned') => {
+const normalizeFlowCatalogItem = (
+  session: Session,
+  flowResponse: AnyRecord,
+  accessScope: FlowCatalogItem['accessScope'] = 'owned',
+): FlowCatalogItem | null => {
   const properties = flowResponse?.properties || {};
   const definitionSummary = properties.definitionSummary || {};
+  const flowId = flowResponse?.name || null;
+
+  if (!flowId) return null;
 
   return {
     actionTypes: Array.isArray(definitionSummary.actions)
-      ? definitionSummary.actions.map((action) => action?.type).filter(Boolean)
+      ? definitionSummary.actions.map((action: AnyRecord) => action?.type).filter(Boolean)
       : [],
     accessScope,
     createdTime: properties.createdTime || null,
     creatorObjectId: properties.creator?.objectId || null,
-    displayName: properties.displayName || flowResponse?.name || 'Untitled flow',
+    displayName: properties.displayName || flowId || 'Untitled flow',
     envId: session.envId,
-    flowId: flowResponse?.name || null,
+    flowId,
     lastModifiedTime: properties.lastModifiedTime || null,
     sharingType: properties.sharingType || null,
     state: properties.state || null,
     triggerTypes: Array.isArray(definitionSummary.triggers)
-      ? definitionSummary.triggers.map((trigger) => trigger?.type).filter(Boolean)
+      ? definitionSummary.triggers.map((trigger: AnyRecord) => trigger?.type).filter(Boolean)
       : [],
     userType: properties.userType || null,
   };
 };
 
-const normalizeLegacyFlow = (session, flowResponse) => {
+const normalizeLegacyFlow = (session: Pick<Session, 'envId' | 'flowId'>, flowResponse: AnyRecord): NormalizedFlow => {
   const properties = flowResponse?.properties || {};
 
   return {
@@ -215,7 +285,7 @@ const normalizeLegacyFlow = (session, flowResponse) => {
   };
 };
 
-const normalizeSnapshot = (snapshot) => ({
+const normalizeSnapshot = (snapshot: { displayName?: string; envId: string; flow: FlowContent; flowId: string; source: string }): NormalizedFlow => ({
   displayName: snapshot.displayName || '',
   envId: snapshot.envId,
   environment: null,
@@ -228,11 +298,11 @@ const normalizeSnapshot = (snapshot) => ({
   source: snapshot.source,
 });
 
-const getDisplayNameFromSnapshot = (snapshot) =>
+const getDisplayNameFromSnapshot = (snapshot: { displayName?: string; flow?: { definition?: AnyRecord } } | null) =>
   snapshot?.displayName || snapshot?.flow?.definition?.metadata?.displayName || null;
 
-const resolveCurrentTabFlowName = (session) => {
-  if (!session?.flowId) return null;
+const resolveCurrentTabFlowName = (session: Session) => {
+  if (!session.flowId) return null;
 
   const snapshot = getFlowSnapshotForFlow({ envId: session.envId, flowId: session.flowId }) || getFlowSnapshot();
 
@@ -244,7 +314,7 @@ const resolveCurrentTabFlowName = (session) => {
   return catalog?.flows?.find((flow) => flow.flowId === session.flowId)?.displayName || null;
 };
 
-const resolveTargetDisplayName = (session) => {
+const resolveTargetDisplayName = (session: Session) => {
   const target = getActiveOrTabTarget(session);
 
   if (!target?.flowId) return null;
@@ -258,53 +328,8 @@ const resolveTargetDisplayName = (session) => {
   return getDisplayNameFromSnapshot(snapshot);
 };
 
-const summarizeFlowForHistory = (normalizedFlow) => {
-  const actions = normalizedFlow?.flow?.definition?.actions || {};
-  const triggers = normalizedFlow?.flow?.definition?.triggers || {};
-
-  return {
-    actionCount: Object.keys(actions).length,
-    actionNames: Object.keys(actions),
-    displayName: normalizedFlow?.displayName || '',
-    triggerCount: Object.keys(triggers).length,
-  };
-};
-
-const createLastUpdateRecord = ({ before, after }) => {
-  const beforeSummary = summarizeFlowForHistory(before);
-  const afterSummary = summarizeFlowForHistory(after);
-
-  return {
-    after,
-    before,
-    capturedAt: new Date().toISOString(),
-    envId: after.envId,
-    flowId: after.flowId,
-    summary: {
-      afterActionCount: afterSummary.actionCount,
-      afterDisplayName: afterSummary.displayName,
-      afterTriggerCount: afterSummary.triggerCount,
-      beforeActionCount: beforeSummary.actionCount,
-      beforeDisplayName: beforeSummary.displayName,
-      beforeTriggerCount: beforeSummary.triggerCount,
-      changedActionNames: [...new Set([...beforeSummary.actionNames, ...afterSummary.actionNames])].filter(
-        (name) =>
-          !beforeSummary.actionNames.includes(name) ||
-          !afterSummary.actionNames.includes(name),
-      ),
-      changedDefinition:
-        JSON.stringify(before.flow.definition) !== JSON.stringify(after.flow.definition) ||
-        JSON.stringify(before.flow.connectionReferences) !== JSON.stringify(after.flow.connectionReferences),
-      changedDisplayName: before.displayName !== after.displayName,
-      changedFlowBody:
-        JSON.stringify(before.flow.definition) !== JSON.stringify(after.flow.definition) ||
-        JSON.stringify(before.flow.connectionReferences) !== JSON.stringify(after.flow.connectionReferences),
-    },
-  };
-};
-
-const fetchRawFlowModern = async (session, flowId = session.flowId) =>
-  requestJson({
+const fetchRawFlowModern = async (session: Pick<TargetSession, 'apiToken' | 'apiUrl' | 'flowId'>, flowId = session.flowId) =>
+  requestJson<AnyRecord>({
     apiVersion: MODERN_API_VERSION,
     baseUrl: session.apiUrl,
     method: 'GET',
@@ -312,7 +337,7 @@ const fetchRawFlowModern = async (session, flowId = session.flowId) =>
     token: session.apiToken,
   });
 
-const fetchRawFlowLegacy = async (session, flowId = session.flowId) => {
+const fetchRawFlowLegacy = async (session: Session & { envId: string; flowId: string }, flowId = session.flowId) => {
   const legacySession = getPreferredLegacySession(session);
 
   if (!legacySession) {
@@ -321,7 +346,7 @@ const fetchRawFlowLegacy = async (session, flowId = session.flowId) => {
     );
   }
 
-  return requestJson({
+  return requestJson<AnyRecord>({
     apiVersion: LEGACY_API_VERSION,
     baseUrl: legacySession.baseUrl,
     method: 'GET',
@@ -330,7 +355,7 @@ const fetchRawFlowLegacy = async (session, flowId = session.flowId) => {
   });
 };
 
-const queryLegacyFlows = async (session, { filter } = {}) => {
+const queryLegacyFlows = async (session: Session, options: { filter?: string } = {}) => {
   const legacySession = getPreferredLegacySession(session);
 
   if (!legacySession) {
@@ -342,8 +367,8 @@ const queryLegacyFlows = async (session, { filter } = {}) => {
   const resourcePath = getLegacyFlowsCollectionPath(session.envId);
   const requestUrl = buildRequestUrl(legacySession.baseUrl, resourcePath, LEGACY_API_VERSION);
 
-  if (filter) {
-    requestUrl.searchParams.set('$filter', filter);
+  if (options.filter) {
+    requestUrl.searchParams.set('$filter', options.filter);
   }
 
   const response = await fetch(requestUrl, {
@@ -360,40 +385,12 @@ const queryLegacyFlows = async (session, { filter } = {}) => {
   }
 
   return {
-    response: parsedBody,
+    response: parsedBody as AnyRecord,
     source: legacySession.source,
   };
 };
 
-const mergeCatalogItems = (...collections) => {
-  const byFlowId = new Map();
-
-  for (const collection of collections) {
-    for (const flow of collection) {
-      const current = byFlowId.get(flow.flowId);
-
-      if (!current) {
-        byFlowId.set(flow.flowId, flow);
-        continue;
-      }
-
-      byFlowId.set(flow.flowId, {
-        ...current,
-        accessScope:
-          current.accessScope === 'owned' && flow.accessScope !== 'owned'
-            ? flow.accessScope
-            : current.accessScope,
-        creatorObjectId: current.creatorObjectId || flow.creatorObjectId || null,
-        sharingType: current.sharingType || flow.sharingType || null,
-        userType: current.userType || flow.userType || null,
-      });
-    }
-  }
-
-  return [...byFlowId.values()].sort((left, right) => left.displayName.localeCompare(right.displayName));
-};
-
-const listFlowsLegacy = async (session) => {
+const listFlowsLegacy = async (session: Session): Promise<FlowCatalog> => {
   const [baseResult, sharedUserResult, portalSharedResult] = await Promise.all([
     queryLegacyFlows(session),
     queryLegacyFlows(session, { filter: "properties/userType eq 'User'" }).catch(() => ({
@@ -410,56 +407,41 @@ const listFlowsLegacy = async (session) => {
 
   const baseFlows = Array.isArray(baseResult.response?.value)
     ? baseResult.response.value
-        .map((flow) => normalizeFlowCatalogItem(session, flow, 'owned'))
-        .filter((flow) => flow.flowId)
+        .map((flow: AnyRecord) => normalizeFlowCatalogItem(session, flow, 'owned'))
+        .filter((flow): flow is FlowCatalogItem => Boolean(flow))
     : [];
 
   const sharedUserFlows = Array.isArray(sharedUserResult.response?.value)
     ? sharedUserResult.response.value
-        .map((flow) => normalizeFlowCatalogItem(session, flow, 'shared-user'))
-        .filter((flow) => flow.flowId)
+        .map((flow: AnyRecord) => normalizeFlowCatalogItem(session, flow, 'shared-user'))
+        .filter((flow): flow is FlowCatalogItem => Boolean(flow))
     : [];
 
   const baseFlowIds = new Set(baseFlows.map((flow) => flow.flowId));
   const sharedUserFlowIds = new Set(sharedUserFlows.map((flow) => flow.flowId));
   const portalSharedExtras = Array.isArray(portalSharedResult.response?.value)
     ? portalSharedResult.response.value
-        .map((flow) => normalizeFlowCatalogItem(session, flow, 'portal-shared'))
-        .filter(
-          (flow) =>
-            flow.flowId &&
-            !baseFlowIds.has(flow.flowId) &&
-            !sharedUserFlowIds.has(flow.flowId),
-        )
+        .map((flow: AnyRecord) => normalizeFlowCatalogItem(session, flow, 'portal-shared'))
+        .filter((flow): flow is FlowCatalogItem => {
+          if (!flow) {
+            return false;
+          }
+
+          return !baseFlowIds.has(flow.flowId) && !sharedUserFlowIds.has(flow.flowId);
+        })
     : [];
 
   const flows = mergeCatalogItems(baseFlows, sharedUserFlows, portalSharedExtras);
 
-  const catalog = {
+  const catalog: FlowCatalog = {
     capturedAt: new Date().toISOString(),
     envId: session.envId,
     flows,
-    source:
-      portalSharedResult.source ||
-      sharedUserResult.source ||
-      baseResult.source,
+    source: portalSharedResult.source || sharedUserResult.source || baseResult.source || 'legacy-api',
   };
 
   await saveFlowCatalog(catalog);
   return catalog;
-};
-
-const filterCatalogFlows = (catalog, { limit = 100, query } = {}) => {
-  const normalizedQuery = query?.trim().toLowerCase() || null;
-  const filteredFlows = normalizedQuery
-    ? catalog.flows.filter((flow) => flow.displayName.toLowerCase().includes(normalizedQuery))
-    : catalog.flows;
-
-  return {
-    ...catalog,
-    flows: filteredFlows.slice(0, limit),
-    total: filteredFlows.length,
-  };
 };
 
 export const getStatus = () => {
@@ -506,8 +488,7 @@ export const getCurrentFlow = async () => {
       const legacyFlowResponse = await fetchRawFlowLegacy(session);
       return normalizeLegacyFlow(session, legacyFlowResponse);
     } catch (legacyError) {
-      const snapshot =
-        getFlowSnapshotForFlow({ envId: session.envId, flowId: session.flowId }) || getFlowSnapshot();
+      const snapshot = getFlowSnapshotForFlow({ envId: session.envId, flowId: session.flowId }) || getFlowSnapshot();
 
       if (snapshot && snapshot.flowId === session.flowId && snapshot.envId === session.envId) {
         return normalizeSnapshot(snapshot);
@@ -523,7 +504,7 @@ export const refreshFlows = async () => {
   return listFlowsLegacy(session);
 };
 
-export const listFlows = async ({ limit = 100, query } = {}) => {
+export const listFlows = async ({ limit = 100, query }: ListFlowsInput = {}) => {
   const session = ensureSession();
   try {
     const freshCatalog = await listFlowsLegacy(session);
@@ -543,7 +524,13 @@ export const listFlows = async ({ limit = 100, query } = {}) => {
   }
 };
 
-export const setActiveFlow = async ({ flowId, selectionSource = 'manual' }) => {
+export const setActiveFlow = async ({
+  flowId,
+  selectionSource = 'manual',
+}: {
+  flowId: string;
+  selectionSource?: SelectionSource;
+}) => {
   const session = ensureSession();
   const catalog = getFlowCatalogForEnv(session.envId) || (await listFlowsLegacy(session));
   const matchingFlow = catalog.flows.find((flow) => flow.flowId === flowId);
@@ -611,7 +598,7 @@ export const getActiveFlow = async () => {
   };
 };
 
-const updateCurrentFlowModern = async (session, { displayName, flow }) => {
+const updateCurrentFlowModern = async (session: TargetSession, { displayName, flow }: UpdateFlowInput) => {
   const before = normalizeFlow(session, await fetchRawFlowModern(session));
   const currentProperties = {
     connectionReferences: before.flow.connectionReferences,
@@ -620,7 +607,7 @@ const updateCurrentFlowModern = async (session, { displayName, flow }) => {
     environment: before.environment,
   };
 
-  const updatedFlow = await requestJson({
+  const updatedFlow = await requestJson<AnyRecord>({
     apiVersion: MODERN_API_VERSION,
     baseUrl: session.apiUrl,
     body: {
@@ -641,7 +628,7 @@ const updateCurrentFlowModern = async (session, { displayName, flow }) => {
   return after;
 };
 
-const updateCurrentFlowLegacy = async (session, { displayName, flow }) => {
+const updateCurrentFlowLegacy = async (session: TargetSession, { displayName, flow }: UpdateFlowInput) => {
   const legacySession = getPreferredLegacySession(session);
 
   if (!legacySession) {
@@ -658,7 +645,7 @@ const updateCurrentFlowLegacy = async (session, { displayName, flow }) => {
     environment: before.environment,
   };
 
-  const updatedFlow = await requestJson({
+  const updatedFlow = await requestJson<AnyRecord>({
     apiVersion: LEGACY_API_VERSION,
     baseUrl: legacySession.baseUrl,
     body: {
@@ -679,7 +666,7 @@ const updateCurrentFlowLegacy = async (session, { displayName, flow }) => {
   return after;
 };
 
-export const updateCurrentFlow = async ({ displayName, flow }) => {
+export const updateCurrentFlow = async ({ displayName, flow }: UpdateFlowInput) => {
   const session = ensureTargetSession();
 
   try {
@@ -756,7 +743,7 @@ const buildBlankRecurrenceDefinition = () => ({
   },
 });
 
-const createFlowLegacy = async (session, { displayName, flow }) => {
+const createFlowLegacy = async (session: Session, { displayName, flow }: { displayName: string; flow: FlowContent }) => {
   const legacySession = getPreferredLegacySession(session);
 
   if (!legacySession) {
@@ -765,7 +752,7 @@ const createFlowLegacy = async (session, { displayName, flow }) => {
     );
   }
 
-  const createdFlow = await requestJson({
+  const createdFlow = await requestJson<AnyRecord>({
     apiVersion: LEGACY_API_VERSION,
     baseUrl: legacySession.baseUrl,
     body: {
@@ -795,7 +782,7 @@ const createFlowLegacy = async (session, { displayName, flow }) => {
   );
 };
 
-export const createFlow = async ({ displayName, triggerType = 'request' }) => {
+export const createFlow = async ({ displayName, triggerType = 'request' }: CreateFlowInput) => {
   const session = ensureSession();
   const flow = {
     connectionReferences: {},
@@ -817,9 +804,15 @@ export const createFlow = async ({ displayName, triggerType = 'request' }) => {
   };
 };
 
-export const cloneFlow = async ({ displayName, makeActive = true, sourceFlowId }) => {
+export const cloneFlow = async ({ displayName, makeActive = true, sourceFlowId }: CloneFlowInput) => {
   const session = ensureSession();
-  const sourceResponse = await fetchRawFlowLegacy(session, sourceFlowId);
+  const sourceResponse = await fetchRawFlowLegacy(
+    {
+      ...session,
+      flowId: sourceFlowId,
+    },
+    sourceFlowId,
+  );
   const source = normalizeLegacyFlow(
     {
       ...session,
@@ -853,7 +846,7 @@ export const cloneFlow = async ({ displayName, makeActive = true, sourceFlowId }
   };
 };
 
-export const getLastUpdateSummary = () => {
+export const getLastUpdateSummary = (): LastUpdate | null => {
   const session = getSession();
 
   if (!session) {
@@ -884,19 +877,7 @@ export const revertLastUpdate = async () => {
   });
 };
 
-const normalizeIssues = (issues) => {
-  if (Array.isArray(issues)) return issues;
-  if (Array.isArray(issues?.value)) return issues.value;
-  return [];
-};
-
-const extractNameFromId = (value) => {
-  if (!value || typeof value !== 'string') return null;
-  const parts = value.split('/').filter(Boolean);
-  return parts.at(-1) || null;
-};
-
-const normalizeRun = (session, run) => {
+const normalizeRun = (session: TargetSession, run: AnyRecord): RunSummary => {
   const properties = run?.properties || {};
 
   return {
@@ -909,7 +890,7 @@ const normalizeRun = (session, run) => {
       null,
     failedActionName: null,
     flowId: session.flowId,
-    runId: run?.name || properties.runName || extractNameFromId(run?.id),
+    runId: run?.name || properties.runName || extractNameFromId(run?.id) || 'unknown-run',
     startTime:
       properties.startTime || properties.startTimeUtc || properties.startTimeStamp || properties.startTimeStampUtc || null,
     status: properties.status || properties.state || null,
@@ -922,9 +903,9 @@ const normalizeRun = (session, run) => {
   };
 };
 
-const normalizeRunAction = (action) => {
+const normalizeRunAction = (action: AnyRecord): RunActionSummary => {
   const properties = action?.properties || {};
-  const status = (properties.status || properties.state || null);
+  const status = properties.status || properties.state || null;
   const normalizedStatus = (status || '').toLowerCase();
   const rawErrorMessage =
     properties.error?.message ||
@@ -945,7 +926,7 @@ const normalizeRunAction = (action) => {
   };
 };
 
-const listRunsLegacy = async (session, { limit = 10 } = {}) => {
+const listRunsLegacy = async (session: TargetSession, { limit = 10 }: ListRunsInput = {}) => {
   const legacySession = getPreferredLegacySession(session);
 
   if (!legacySession) {
@@ -954,7 +935,7 @@ const listRunsLegacy = async (session, { limit = 10 } = {}) => {
     );
   }
 
-  const response = await requestJson({
+  const response = await requestJson<AnyRecord>({
     apiVersion: LEGACY_API_VERSION,
     baseUrl: legacySession.baseUrl,
     method: 'GET',
@@ -965,12 +946,12 @@ const listRunsLegacy = async (session, { limit = 10 } = {}) => {
   const runs = Array.isArray(response?.value) ? response.value : [];
 
   return {
-    runs: runs.slice(0, limit).map((run) => normalizeRun(session, run)),
+    runs: runs.slice(0, limit).map((run: AnyRecord) => normalizeRun(session, run)),
     source: legacySession.source,
   };
 };
 
-const getRunLegacy = async (session, runId) => {
+const getRunLegacy = async (session: TargetSession, runId: string) => {
   const legacySession = getPreferredLegacySession(session);
 
   if (!legacySession) {
@@ -979,7 +960,7 @@ const getRunLegacy = async (session, runId) => {
     );
   }
 
-  const run = await requestJson({
+  const run = await requestJson<AnyRecord>({
     apiVersion: LEGACY_API_VERSION,
     baseUrl: legacySession.baseUrl,
     method: 'GET',
@@ -993,7 +974,7 @@ const getRunLegacy = async (session, runId) => {
   };
 };
 
-const getRunActionsLegacy = async (session, runId) => {
+const getRunActionsLegacy = async (session: TargetSession, runId: string) => {
   const legacySession = getPreferredLegacySession(session);
 
   if (!legacySession) {
@@ -1002,7 +983,7 @@ const getRunActionsLegacy = async (session, runId) => {
     );
   }
 
-  const response = await requestJson({
+  const response = await requestJson<AnyRecord>({
     apiVersion: LEGACY_API_VERSION,
     baseUrl: legacySession.baseUrl,
     method: 'GET',
@@ -1013,30 +994,12 @@ const getRunActionsLegacy = async (session, runId) => {
   const actions = Array.isArray(response?.value) ? response.value : [];
 
   return {
-    actions: actions.map(normalizeRunAction),
+    actions: actions.map((action: AnyRecord) => normalizeRunAction(action)),
     source: legacySession.source,
   };
 };
 
-const withFailedAction = (run, actions) => {
-  const failedAction =
-    actions.find((action) => ['failed', 'timedout', 'cancelled', 'canceled'].includes((action.status || '').toLowerCase())) ||
-    actions.find(
-      (action) =>
-        action.errorMessage &&
-        !['skipped', 'succeeded'].includes((action.status || '').toLowerCase()),
-    );
-
-  return {
-    ...run,
-    errorMessage: run.errorMessage || failedAction?.errorMessage || null,
-    failedActionName: failedAction?.name || null,
-  };
-};
-
-const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
-
-const getCurrentTriggerName = async (session) => {
+const getCurrentTriggerName = async () => {
   const flow = await getCurrentFlow();
   const triggerNames = Object.keys(flow.flow.definition.triggers || {});
   const triggerName = triggerNames[0] || null;
@@ -1048,7 +1011,7 @@ const getCurrentTriggerName = async (session) => {
   return triggerName;
 };
 
-export const validateCurrentFlow = async ({ flow }) => {
+export const validateCurrentFlow = async ({ flow }: ValidateFlowInput) => {
   const session = ensureTargetSession();
   const legacySession = getPreferredLegacySession(session);
 
@@ -1094,12 +1057,12 @@ export const validateCurrentFlow = async ({ flow }) => {
   };
 };
 
-export const listRuns = async ({ limit = 10 } = {}) => {
+export const listRuns = async ({ limit = 10 }: ListRunsInput = {}) => {
   const session = ensureTargetSession();
   return listRunsLegacy(session, { limit });
 };
 
-export const getRun = async ({ runId }) => {
+export const getRun = async ({ runId }: { runId: string }) => {
   const session = ensureTargetSession();
   const [{ actions, source }, { run }] = await Promise.all([
     getRunActionsLegacy(session, runId),
@@ -1112,7 +1075,7 @@ export const getRun = async ({ runId }) => {
   };
 };
 
-export const getRunActions = async ({ runId }) => {
+export const getRunActions = async ({ runId }: { runId: string }) => {
   const session = ensureTargetSession();
   return getRunActionsLegacy(session, runId);
 };
@@ -1133,11 +1096,11 @@ export const getLatestRun = async () => {
   };
 };
 
-export const refreshLatestRun = async () => {
+export const refreshLatestRun = async (): Promise<LastRun> => {
   const session = ensureTargetSession();
   const latest = await getLatestRun();
 
-  const payload = {
+  const payload: LastRun = {
     capturedAt: new Date().toISOString(),
     envId: session.envId,
     flowId: session.flowId,
@@ -1148,7 +1111,7 @@ export const refreshLatestRun = async () => {
   return payload;
 };
 
-export const getLastRunSummary = () => {
+export const getLastRunSummary = (): LastRun | null => {
   const session = getSession();
 
   if (!session) {
@@ -1159,10 +1122,14 @@ export const getLastRunSummary = () => {
   return target ? getLastRunForFlow(target) || getLastRun() : getLastRun();
 };
 
-export const waitForRun = async ({ pollIntervalSeconds = 5, runId, timeoutSeconds = 60 } = {}) => {
+export const waitForRun = async ({
+  pollIntervalSeconds = 5,
+  runId,
+  timeoutSeconds = 60,
+}: WaitForRunInput = {}) => {
   const session = ensureTargetSession();
   const deadline = Date.now() + timeoutSeconds * 1000;
-  let targetRunId = runId;
+  let targetRunId = runId || null;
 
   while (Date.now() <= deadline) {
     if (!targetRunId) {
@@ -1202,7 +1169,7 @@ export const waitForRun = async ({ pollIntervalSeconds = 5, runId, timeoutSecond
   };
 };
 
-export const getTriggerCallbackUrl = async ({ triggerName } = {}) => {
+export const getTriggerCallbackUrl = async ({ triggerName }: TriggerCallbackInput = {}) => {
   const session = ensureTargetSession();
   const legacySession = getPreferredLegacySession(session);
 
@@ -1212,8 +1179,8 @@ export const getTriggerCallbackUrl = async ({ triggerName } = {}) => {
     );
   }
 
-  const effectiveTriggerName = triggerName || (await getCurrentTriggerName(session));
-  const response = await requestJson({
+  const effectiveTriggerName = triggerName || (await getCurrentTriggerName());
+  const response = await requestJson<AnyRecord>({
     apiVersion: LEGACY_API_VERSION,
     baseUrl: legacySession.baseUrl,
     body: {},
@@ -1234,7 +1201,7 @@ export const getTriggerCallbackUrl = async ({ triggerName } = {}) => {
   };
 };
 
-export const invokeTrigger = async ({ body = {}, triggerName } = {}) => {
+export const invokeTrigger = async ({ body = {}, triggerName }: { body?: unknown; triggerName?: string } = {}) => {
   const callback = await getTriggerCallbackUrl({ triggerName });
 
   if (!callback.url) {
@@ -1250,7 +1217,7 @@ export const invokeTrigger = async ({ body = {}, triggerName } = {}) => {
   });
 
   const responseText = await response.text();
-  let parsedBody = responseText;
+  let parsedBody: unknown = responseText;
 
   try {
     parsedBody = responseText ? JSON.parse(responseText) : null;

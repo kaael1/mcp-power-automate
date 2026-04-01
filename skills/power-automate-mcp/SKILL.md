@@ -7,6 +7,9 @@ description: Use when working with Power Automate flows through the local `power
 
 This skill teaches the agent how to operate Power Automate safely through the local `power-automate-local` MCP server and its browser extension bridge.
 
+This file is written for Codex-style skill consumption.
+The MCP server itself is not Codex-only.
+
 Use this skill when the user wants to:
 
 - inspect a flow

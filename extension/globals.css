@@ -1,0 +1,82 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --background: 214 100% 97%;
+    --foreground: 219 46% 15%;
+    --card: 0 0% 100%;
+    --card-foreground: 219 46% 15%;
+    --popover: 0 0% 100%;
+    --popover-foreground: 219 46% 15%;
+    --primary: 217 100% 53%;
+    --primary-foreground: 210 100% 98%;
+    --secondary: 213 70% 95%;
+    --secondary-foreground: 218 58% 26%;
+    --muted: 215 56% 95%;
+    --muted-foreground: 218 24% 44%;
+    --destructive: 354 72% 51%;
+    --border: 216 42% 88%;
+    --input: 216 42% 90%;
+    --ring: 217 100% 53%;
+    --success: 154 69% 37%;
+    --success-foreground: 0 0% 100%;
+    --warning: 32 100% 42%;
+    --warning-foreground: 0 0% 100%;
+    --sidebar: 0 0% 100%;
+    --sidebar-foreground: 219 46% 15%;
+    --sidebar-muted: 214 100% 97%;
+    --sidebar-border: 216 42% 88%;
+    --sidebar-primary: 217 100% 53%;
+    --sidebar-ring: 217 100% 53%;
+    --radius: 1.25rem;
+  }
+
+  * {
+    @apply border-border;
+  }
+
+html,
+body {
+  @apply bg-background text-foreground antialiased;
+}
+
+body {
+  background-image:
+    radial-gradient(circle at top left, rgba(15, 98, 254, 0.12), transparent 30%),
+    radial-gradient(circle at top right, rgba(23, 190, 187, 0.08), transparent 24%),
+    linear-gradient(180deg, #f7faff 0%, #eef3fb 48%, #e8eef8 100%);
+}
+
+body[data-surface='popup'] {
+  min-width: 560px;
+  width: 560px;
+  min-height: 820px;
+  height: 820px;
+  overflow-y: auto;
+}
+
+body[data-surface='sidepanel'] {
+  min-width: 100%;
+  min-height: 100vh;
+}
+
+#app {
+  min-height: 100vh;
+}
+}
+
+@layer components {
+  .glass-panel {
+    @apply rounded-[28px] border border-white/70 bg-white/90 shadow-soft backdrop-blur-xl;
+  }
+
+  .surface-panel {
+    @apply rounded-[24px] border bg-white/95 shadow-surface backdrop-blur-md;
+  }
+
+  .kicker {
+    @apply text-[11px] font-semibold uppercase tracking-[0.2em] text-muted-foreground;
+  }
+}

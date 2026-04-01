@@ -1,27 +1,25 @@
 import { promises as fs } from 'node:fs';
-import path from 'node:path';
-import { fileURLToPath } from 'node:url';
 
-import { flowSnapshotSchema } from './schemas.mjs';
-import { makeFlowKey } from './flow-key.mjs';
+import { makeFlowKey } from './flow-key.js';
+import type { FlowSnapshot } from './schemas.js';
+import { flowSnapshotSchema } from './schemas.js';
+import { getDataDir, getDataFilePath } from './runtime-paths.js';
 
-const rootDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const dataDir = path.join(rootDir, 'data');
-const snapshotFilePath = path.join(dataDir, 'flow-snapshot.json');
-
-let activeKey = null;
-let snapshotsByKey = {};
+let activeKey: string | null = null;
+let snapshotsByKey: Record<string, FlowSnapshot> = {};
 
 const ensureDataDir = async () => {
-  await fs.mkdir(dataDir, { recursive: true });
+  await fs.mkdir(getDataDir(), { recursive: true });
 };
 
-const normalizeStoredShape = (rawValue) => {
-  if (rawValue?.records) {
+const normalizeStoredShape = (rawValue: unknown) => {
+  const recordsSource = (rawValue as { records?: Record<string, unknown> } | null | undefined)?.records;
+
+  if (recordsSource) {
     return {
-      activeKey: rawValue.activeKey || null,
+      activeKey: (rawValue as { activeKey?: string | null }).activeKey || null,
       records: Object.fromEntries(
-        Object.entries(rawValue.records).map(([key, value]) => [key, flowSnapshotSchema.parse(value)]),
+        Object.entries(recordsSource).map(([key, value]) => [key, flowSnapshotSchema.parse(value)]),
       ),
     };
   }
@@ -50,19 +48,20 @@ const getPersistedShape = () => ({
 
 export const getFlowSnapshot = () => (activeKey ? snapshotsByKey[activeKey] || null : null);
 
-export const getFlowSnapshotForFlow = ({ envId, flowId }) => snapshotsByKey[makeFlowKey({ envId, flowId })] || null;
+export const getFlowSnapshotForFlow = ({ envId, flowId }: { envId: string; flowId: string }) =>
+  snapshotsByKey[makeFlowKey({ envId, flowId })] || null;
 
 export const loadFlowSnapshot = async () => {
   await ensureDataDir();
 
   try {
-    const raw = await fs.readFile(snapshotFilePath, 'utf8');
+    const raw = await fs.readFile(getDataFilePath('flow-snapshot.json'), 'utf8');
     const normalized = normalizeStoredShape(JSON.parse(raw));
     activeKey = normalized.activeKey;
     snapshotsByKey = normalized.records;
     return getPersistedShape();
   } catch (error) {
-    if (error?.code === 'ENOENT') {
+    if ((error as NodeJS.ErrnoException)?.code === 'ENOENT') {
       activeKey = null;
       snapshotsByKey = {};
       return null;
@@ -74,7 +73,7 @@ export const loadFlowSnapshot = async () => {
   }
 };
 
-export const saveFlowSnapshot = async (snapshot) => {
+export const saveFlowSnapshot = async (snapshot: FlowSnapshot) => {
   const parsed = flowSnapshotSchema.parse(snapshot);
   const key = makeFlowKey(parsed);
   await ensureDataDir();
@@ -83,6 +82,6 @@ export const saveFlowSnapshot = async (snapshot) => {
     [key]: parsed,
   };
   activeKey = key;
-  await fs.writeFile(snapshotFilePath, `${JSON.stringify(getPersistedShape(), null, 2)}\n`, 'utf8');
+  await fs.writeFile(getDataFilePath('flow-snapshot.json'), `${JSON.stringify(getPersistedShape(), null, 2)}\n`, 'utf8');
   return parsed;
 };

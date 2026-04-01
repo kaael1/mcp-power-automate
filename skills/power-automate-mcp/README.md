@@ -2,6 +2,9 @@
 
 This skill belongs in the same repository as the MCP server.
 
+This skill is Codex-specific guidance.
+The MCP server itself is still useful from any MCP client that can launch a local `stdio` server.
+
 Why:
 
 - the MCP and the skill evolve together

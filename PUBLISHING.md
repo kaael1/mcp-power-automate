@@ -8,6 +8,7 @@ This repo supports two distribution paths today:
 ## 1. Verify the package locally
 
 ```powershell
+bun run check
 npm pack --dry-run
 ```
 

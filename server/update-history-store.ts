@@ -1,27 +1,25 @@
 import { promises as fs } from 'node:fs';
-import path from 'node:path';
-import { fileURLToPath } from 'node:url';
 
-import { lastUpdateSchema } from './schemas.mjs';
-import { makeFlowKey } from './flow-key.mjs';
+import { makeFlowKey } from './flow-key.js';
+import type { LastUpdate } from './schemas.js';
+import { lastUpdateSchema } from './schemas.js';
+import { getDataDir, getDataFilePath } from './runtime-paths.js';
 
-const rootDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const dataDir = path.join(rootDir, 'data');
-const historyFilePath = path.join(dataDir, 'last-update.json');
-
-let activeKey = null;
-let updatesByKey = {};
+let activeKey: string | null = null;
+let updatesByKey: Record<string, LastUpdate> = {};
 
 const ensureDataDir = async () => {
-  await fs.mkdir(dataDir, { recursive: true });
+  await fs.mkdir(getDataDir(), { recursive: true });
 };
 
-const normalizeStoredShape = (rawValue) => {
-  if (rawValue?.records) {
+const normalizeStoredShape = (rawValue: unknown) => {
+  const recordsSource = (rawValue as { records?: Record<string, unknown> } | null | undefined)?.records;
+
+  if (recordsSource) {
     return {
-      activeKey: rawValue.activeKey || null,
+      activeKey: (rawValue as { activeKey?: string | null }).activeKey || null,
       records: Object.fromEntries(
-        Object.entries(rawValue.records).map(([key, value]) => [key, lastUpdateSchema.parse(value)]),
+        Object.entries(recordsSource).map(([key, value]) => [key, lastUpdateSchema.parse(value)]),
       ),
     };
   }
@@ -50,19 +48,20 @@ const getPersistedShape = () => ({
 
 export const getLastUpdate = () => (activeKey ? updatesByKey[activeKey] || null : null);
 
-export const getLastUpdateForFlow = ({ envId, flowId }) => updatesByKey[makeFlowKey({ envId, flowId })] || null;
+export const getLastUpdateForFlow = ({ envId, flowId }: { envId: string; flowId: string }) =>
+  updatesByKey[makeFlowKey({ envId, flowId })] || null;
 
 export const loadLastUpdate = async () => {
   await ensureDataDir();
 
   try {
-    const raw = await fs.readFile(historyFilePath, 'utf8');
+    const raw = await fs.readFile(getDataFilePath('last-update.json'), 'utf8');
     const normalized = normalizeStoredShape(JSON.parse(raw));
     activeKey = normalized.activeKey;
     updatesByKey = normalized.records;
     return getPersistedShape();
   } catch (error) {
-    if (error?.code === 'ENOENT') {
+    if ((error as NodeJS.ErrnoException)?.code === 'ENOENT') {
       activeKey = null;
       updatesByKey = {};
       return null;
@@ -74,7 +73,7 @@ export const loadLastUpdate = async () => {
   }
 };
 
-export const saveLastUpdate = async (lastUpdate) => {
+export const saveLastUpdate = async (lastUpdate: LastUpdate) => {
   const parsed = lastUpdateSchema.parse(lastUpdate);
   const key = makeFlowKey(parsed);
   await ensureDataDir();
@@ -83,6 +82,6 @@ export const saveLastUpdate = async (lastUpdate) => {
     [key]: parsed,
   };
   activeKey = key;
-  await fs.writeFile(historyFilePath, `${JSON.stringify(getPersistedShape(), null, 2)}\n`, 'utf8');
+  await fs.writeFile(getDataFilePath('last-update.json'), `${JSON.stringify(getPersistedShape(), null, 2)}\n`, 'utf8');
   return parsed;
 };

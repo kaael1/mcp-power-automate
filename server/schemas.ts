@@ -23,8 +23,8 @@ export const sessionSchema = z.object({
 });
 
 export const flowContentSchema = z.object({
-  connectionReferences: z.record(z.string(), z.unknown()),
-  definition: z.record(z.string(), z.unknown()),
+  connectionReferences: z.record(z.string(), z.any()),
+  definition: z.record(z.string(), z.any()),
 });
 
 export const flowCatalogItemSchema = z.object({
@@ -101,8 +101,8 @@ export const normalizedFlowSchema = z.object({
   environment: z.unknown().nullable().optional(),
   flow: z.object({
     $schema: z.string().optional(),
-    connectionReferences: z.record(z.string(), z.unknown()),
-    definition: z.record(z.string(), z.unknown()),
+    connectionReferences: z.record(z.string(), z.any()),
+    definition: z.record(z.string(), z.any()),
   }),
   flowId: flowIdSchema,
   source: z.string().optional(),
@@ -190,3 +190,31 @@ export const invokeTriggerInputSchema = z.object({
   body: z.unknown().optional(),
   triggerName: z.string().trim().min(1).optional(),
 });
+
+export type FlowId = z.infer<typeof flowIdSchema>;
+export type EnvId = z.infer<typeof envIdSchema>;
+export type SelectionSource = z.infer<typeof selectionSourceSchema>;
+export type Session = z.infer<typeof sessionSchema>;
+export type FlowContent = z.infer<typeof flowContentSchema>;
+export type FlowCatalogItem = z.infer<typeof flowCatalogItemSchema>;
+export type FlowCatalog = z.infer<typeof flowCatalogSchema>;
+export type ActiveTarget = z.infer<typeof activeTargetSchema>;
+export type UpdateFlowInput = z.infer<typeof updateFlowInputSchema>;
+export type ValidateFlowInput = z.infer<typeof validateFlowInputSchema>;
+export type FlowSnapshot = z.infer<typeof flowSnapshotSchema>;
+export type TokenCandidate = z.infer<typeof tokenCandidateSchema>;
+export type TokenAudit = z.infer<typeof tokenAuditSchema>;
+export type NormalizedFlow = z.infer<typeof normalizedFlowSchema>;
+export type UpdateSummary = z.infer<typeof updateSummarySchema>;
+export type LastUpdate = z.infer<typeof lastUpdateSchema>;
+export type RunSummary = z.infer<typeof runSummarySchema>;
+export type LastRun = z.infer<typeof lastRunSchema>;
+export type ListRunsInput = z.infer<typeof listRunsInputSchema>;
+export type ListFlowsInput = z.infer<typeof listFlowsInputSchema>;
+export type SetActiveFlowInput = z.infer<typeof setActiveFlowInputSchema>;
+export type CreateFlowInput = z.infer<typeof createFlowInputSchema>;
+export type CloneFlowInput = z.infer<typeof cloneFlowInputSchema>;
+export type GetRunInput = z.infer<typeof getRunInputSchema>;
+export type WaitForRunInput = z.infer<typeof waitForRunInputSchema>;
+export type TriggerCallbackInput = z.infer<typeof triggerCallbackInputSchema>;
+export type InvokeTriggerInput = z.infer<typeof invokeTriggerInputSchema>;
