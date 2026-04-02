@@ -67,8 +67,17 @@ Check the public repo:
 
 - https://github.com/kaael1/mcp-power-automate
 
+Check the Official MCP Registry listing:
+
+- https://registry.modelcontextprotocol.io/v0/servers?search=io.github.kaael1/mcp-power-automate
+
 Check skills discovery:
 
 ```powershell
 npx skills add kaael1/mcp-power-automate --list
 ```
+
+Notes:
+
+- If the npm release is newer than the Official MCP Registry listing, re-run the registry publish step so public metadata stays aligned.
+- skills.sh discoverability is influenced by install telemetry, so the direct `npx skills add kaael1/mcp-power-automate --skill power-automate-mcp` path matters for early momentum.

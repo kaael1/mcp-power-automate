@@ -17,6 +17,8 @@ Local MCP server, Chromium extension, and optional Codex skill for operating Mic
 > No Microsoft Entra ID app registration, admin consent, or custom enterprise app setup is required.
 > This MCP uses your existing logged-in browser session instead, which is often much easier to adopt inside locked-down companies.
 
+Built for MCP users who want to do real Power Automate work without getting stuck in enterprise auth setup, tab confusion, or blind edits.
+
 This project lets an agent:
 
 - list flows from the current environment, including owned and shared-visible flows
@@ -28,6 +30,23 @@ The server is MCP-client agnostic.
 
 - Use the MCP from Codex, Claude clients, Gemini clients, OpenCode, or any other MCP client that supports local `stdio` servers.
 - The bundled `power-automate-mcp` skill in this repository is Codex-specific helper guidance, not a requirement for the MCP itself.
+
+## Why MCP users install this
+
+- No Microsoft Entra ID app registration just to get started
+- Explicit target flow locking instead of following whatever tab happens to be active
+- Browser-backed auth that matches how teams already work in Power Automate
+- Structured review diff plus one-step rollback after saves
+- Local-first architecture that keeps the browser for context while the MCP handles the workflow logic
+
+## Why this is useful
+
+| Common pain | What this repo gives you |
+| --- | --- |
+| Enterprise setup friction before first success | Browser-backed auth from your existing logged-in session |
+| Risk of editing the wrong flow | Explicit `set_active_flow` targeting plus current-tab sync |
+| Hard to trust AI changes | Post-save review diff and one-step revert |
+| Slow manual inspection and run triage | MCP tools for flow reads, validation, runs, actions, and trigger tests |
 
 ## Install in 60 seconds
 
@@ -57,6 +76,12 @@ Open Power Automate, refresh any flow page, and ask your MCP client to:
 2. `set_active_flow`
 3. `get_flow`
 
+In practice, most users start with three wins:
+
+1. inspect a real flow without hand-copying JSON
+2. make a focused change and validate it
+3. review or revert the last save with confidence
+
 If this saves you time, star the repo:
 
 - https://github.com/kaael1/mcp-power-automate
@@ -67,6 +92,10 @@ If this saves you time, star the repo:
 - npm: https://www.npmjs.com/package/@kaael1/mcp-power-automate
 - Official MCP Registry: https://registry.modelcontextprotocol.io/v0/servers?search=io.github.kaael1/mcp-power-automate
 - skills.sh discovery: https://skills.sh/
+
+## Fast pitch
+
+If you already use MCP clients and want something genuinely useful for enterprise workflows, this repo gives you a local Power Automate operator with browser-backed auth, explicit targeting, safer edits, and real rollback context.
 
 ## How it works
 
@@ -112,6 +141,12 @@ This gives you a good tradeoff:
 - Clone an existing flow
 - List runs, inspect action-level results, and wait for completion
 - Get a callback URL and invoke manual/request flows
+
+## Who this is for
+
+- MCP power users looking for high-leverage local tooling
+- Power Automate makers who want AI help without rebuilding auth from scratch
+- Teams who need safer automation edits than “let the agent click around and hope”
 
 ## Install options
 
@@ -248,6 +283,16 @@ Relevant files:
 - [`server.json`](server.json)
 - [`PUBLISHING.md`](PUBLISHING.md)
 - [`CHANGELOG.md`](CHANGELOG.md)
+
+## Search and install phrases
+
+People should be able to find this repo when searching for:
+
+- `Power Automate MCP`
+- `Microsoft Power Automate MCP server`
+- `local MCP for Power Automate`
+- `browser-backed auth MCP`
+- `Codex skill for Power Automate`
 
 ## Client compatibility
 

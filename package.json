@@ -3,7 +3,7 @@
   "version": "0.4.0",
   "private": false,
   "type": "module",
-  "description": "Local Power Automate MCP server, browser extension, and installable Codex skill.",
+  "description": "Local MCP server for Microsoft Power Automate with browser-backed auth, explicit flow targeting, validation, review diff, and rollback.",
   "mcpName": "io.github.kaael1/mcp-power-automate",
   "bin": {
     "mcp-power-automate": "dist/server/index.js"
@@ -44,12 +44,21 @@
   "license": "MIT",
   "keywords": [
     "automation",
+    "ai-agents",
     "browser-extension",
+    "browser-auth",
+    "claude-code",
     "codex",
+    "codex-skill",
+    "flow",
     "mcp",
+    "microsoft-flow",
+    "microsoft-power-automate",
     "model-context-protocol",
+    "power-platform",
     "power-automate",
-    "skills"
+    "skills",
+    "workflow-automation"
   ],
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.29.0",

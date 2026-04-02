@@ -1,25 +1,30 @@
 # power-automate-mcp skill
 
-This skill belongs in the same repository as the MCP server.
+Codex-focused operating guidance for the local Power Automate MCP in this repository.
 
-This skill is Codex-specific guidance.
-The MCP server itself is still useful from any MCP client that can launch a local `stdio` server.
+This skill is for people who want Codex to inspect, validate, update, test, review, and revert Microsoft Power Automate flows through the local `power-automate-local` MCP server.
 
-Why:
+## Install
+
+Install directly from GitHub:
+
+```bash
+npx skills add kaael1/mcp-power-automate --skill power-automate-mcp
+```
+
+## What it helps with
+
+- choosing an explicit target flow instead of guessing from the active tab
+- using `get_status`, `list_flows`, and `set_active_flow` safely before writes
+- validating before and after saves when possible
+- reviewing the last saved change and reverting it if needed
+- testing manual/request flows with callback URLs and run inspection
+
+## Why it lives in this repo
 
 - the MCP and the skill evolve together
-- the skill documents the exact tools this MCP exposes
+- the skill documents the exact tools and safety workflow this MCP exposes
 - GitHub users can clone one repo and get both the server and the usage instructions
-- local Codex config can point directly at this `SKILL.md`
+- Codex users can install it with one command instead of wiring a local path manually
 
-Recommended local setup:
-
-1. Register the MCP server in Codex.
-2. Register the skill path in `~/.codex/config.toml`.
-3. Restart Codex.
-
-If you publish this repo, other users can do the same by pointing their Codex config at:
-
-```text
-<repo>/skills/power-automate-mcp/SKILL.md
-```
+The MCP server itself is still useful from any MCP client that can launch a local `stdio` server.
