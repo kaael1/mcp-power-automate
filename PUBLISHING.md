@@ -38,16 +38,31 @@ Expected package:
 
 ## 3. Publish to the Official MCP Registry
 
-Authenticate with GitHub using the MCP publisher CLI:
+Install the official `mcp-publisher` CLI from the registry releases:
 
 ```powershell
-npx mcp-publisher login github
+$arch = if ([System.Runtime.InteropServices.RuntimeInformation]::ProcessArchitecture -eq "Arm64") { "arm64" } else { "amd64" }
+Invoke-WebRequest -Uri "https://github.com/modelcontextprotocol/registry/releases/download/v1.5.0/mcp-publisher_windows_$arch.tar.gz" -OutFile "mcp-publisher.tar.gz"
+tar xf mcp-publisher.tar.gz
+Remove-Item mcp-publisher.tar.gz
+```
+
+Authenticate with GitHub:
+
+```powershell
+.\mcp-publisher.exe login github
+```
+
+Or authenticate with a GitHub PAT:
+
+```powershell
+.\mcp-publisher.exe login github -token YOUR_GITHUB_PAT
 ```
 
 Then publish from the repository root:
 
 ```powershell
-npx mcp-publisher publish
+.\mcp-publisher.exe publish
 ```
 
 This uses:
@@ -81,3 +96,4 @@ Notes:
 
 - If the npm release is newer than the Official MCP Registry listing, re-run the registry publish step so public metadata stays aligned.
 - skills.sh discoverability is influenced by install telemetry, so the direct `npx skills add kaael1/mcp-power-automate --skill power-automate-mcp` path matters for early momentum.
+- The newer `mcp-publisher` CLI accepts `publish --dry-run`, which is useful for validating `server.json` before pushing a live registry update.
