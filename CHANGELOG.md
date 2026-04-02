@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.4.1
+
+- Simplified the public README visuals so the main SVG banner reads cleanly on GitHub without clipped or crowded text.
+- Removed the secondary architecture image from the README and tightened the visual hierarchy around the main banner.
+- Prepared a clean patch release after the `v0.4.0` tag so GitHub, npm, and the MCP Registry can be re-aligned on the latest public state.
+
 ## 0.4.0
 
 - Refined the extension UI around a compact popup quick launcher and a clearer side-panel workspace with `Today`, `Flows`, `Review`, and `System`.

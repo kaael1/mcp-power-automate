@@ -71,7 +71,7 @@ const createJsonResource = (uri: string, payload: unknown) => ({
 export const createMcpApp = () => {
   const server = new McpServer({
     name: 'power-automate-local',
-    version: '0.4.0',
+    version: '0.4.1',
   });
 
   server.registerResource(

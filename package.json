@@ -1,6 +1,6 @@
 {
   "name": "@kaael1/mcp-power-automate",
-  "version": "0.4.0",
+  "version": "0.4.1",
   "private": false,
   "type": "module",
   "description": "Local MCP server for Microsoft Power Automate with browser-backed auth, explicit flow targeting, validation, review diff, and rollback.",
