@@ -1,841 +1,802 @@
-import { type ComponentType, useMemo, useState } from 'react';
+import { type ChangeEvent, type ReactNode, useMemo, useState } from 'react';
 import {
-  Activity,
-  AlertTriangle,
-  ArrowRightLeft,
-  Cable,
-  Clock3,
-  Database,
-  ExternalLink,
-  Gauge,
-  Pin,
-  PinOff,
-  Radar,
+  CheckCircle2,
+  Globe2,
+  History,
+  Languages,
+  LayoutList,
   RefreshCcw,
-  RotateCcw,
-  Server,
-  ShieldCheck,
-  Sparkles,
-  Target,
+  Shield,
+  Workflow,
 } from 'lucide-react';
 
 import type { HealthPayload } from '../../server/bridge-types.js';
-import type { FlowCatalogItem } from '../../server/schemas.js';
-import type { DashboardAction } from '../use-dashboard.js';
-import type { DashboardAttentionItem, DashboardFlowReference, DashboardModel } from '../dashboard-model.js';
+import type { DashboardModel } from '../dashboard-model.js';
+import { LOCALE_OPTIONS, t, type Locale } from '../i18n.js';
 import { cn } from '../lib/utils.js';
-import { Badge } from './ui/badge.js';
+import type { DashboardAction } from '../use-dashboard.js';
+import { ActionGroup } from './pa/actions.js';
+import { AccessScopeBadge, PinBadge, SectionLabel, StatusDot } from './pa/atoms.js';
+import { AttentionBannerSingle, AttentionItemRow, LastRunCard, LastUpdateCard } from './pa/cards.js';
+import { DiagnosticsBlock } from './pa/diagnostics.js';
+import { FlowRefRow } from './pa/flow-ref.js';
+import { LastUpdateReview } from './pa/review.js';
+import { SignalGrid } from './pa/signal-grid.js';
 import { Button } from './ui/button.js';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './ui/card.js';
-import { Collapsible, CollapsibleContent, CollapsibleTrigger } from './ui/collapsible.js';
 import { Input } from './ui/input.js';
-import { ScrollArea } from './ui/scroll-area.js';
-import { Separator } from './ui/separator.js';
 import { Skeleton } from './ui/skeleton.js';
 
-type SidePanelSection = 'current' | 'diagnostics' | 'flows' | 'today';
+export type SidePanelSection = 'flows' | 'review' | 'system' | 'today';
 
-const formatDateTime = (value: string | null | undefined) => {
-  if (!value) return 'Not available';
+type Surface = 'popup' | 'sidepanel';
 
-  const parsed = new Date(value);
-  if (Number.isNaN(parsed.getTime())) return value;
-
-  return `${parsed.toLocaleDateString()} ${parsed.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
+const truncate = (value: string | null | undefined, max: number) => {
+  if (!value) return '—';
+  return value.length > max ? `${value.slice(0, max)}…` : value;
 };
 
-const formatShortId = (value: string | null | undefined) => {
-  if (!value) return 'Not available';
-  return value.length > 16 ? `${value.slice(0, 8)}...${value.slice(-4)}` : value;
-};
+const getDisplayedTarget = (model: DashboardModel) => model.activeTarget || model.currentTab || null;
 
-const relativeFromNow = (value: string | null | undefined) => {
-  if (!value) return 'No timestamp yet';
+const getActionableAttention = (model: Pick<DashboardModel, 'attentionItems'>) =>
+  model.attentionItems.filter((item) => item.severity !== 'success');
 
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return value;
-
-  const diffMs = Date.now() - date.getTime();
-  const diffMinutes = Math.round(diffMs / 60000);
-
-  if (Math.abs(diffMinutes) < 1) return 'Just now';
-  if (Math.abs(diffMinutes) < 60) return `${diffMinutes} min ago`;
-
-  const diffHours = Math.round(diffMinutes / 60);
-  if (Math.abs(diffHours) < 24) return `${diffHours}h ago`;
-
-  const diffDays = Math.round(diffHours / 24);
-  return `${diffDays}d ago`;
-};
-
-const toneToBadgeVariant = (severity: DashboardAttentionItem['severity']) => {
-  switch (severity) {
-    case 'critical':
-      return 'critical';
-    case 'success':
-      return 'good';
-    case 'warning':
-      return 'warning';
-    default:
-      return 'primary';
-  }
-};
-
-const accessTone = (accessScope: FlowCatalogItem['accessScope']) => {
-  switch (accessScope) {
-    case 'owned':
-      return 'good';
-    case 'portal-shared':
-      return 'warning';
-    case 'shared-user':
-      return 'primary';
-    default:
-      return 'neutral';
-  }
-};
-
-const surfaceTone = (model: DashboardModel) => {
-  if (!model.bridgeOnline) return 'critical';
-  if (model.selectedTargetMismatch || !model.hasLegacyApi) return 'warning';
-  if ((model.lastRunStatus || '').toLowerCase() === 'failed') return 'critical';
-  return 'good';
-};
-
-const SurfaceHeader = ({
-  compact,
-  model,
+function LocaleToggle({
+  locale,
+  onLocaleChange,
 }: {
-  compact?: boolean;
-  model: DashboardModel;
-}) => {
-  const tone = surfaceTone(model);
-  const toneLabel =
-    tone === 'good'
-      ? 'Ready'
-      : tone === 'warning'
-        ? model.selectedTargetMismatch
-          ? 'Target mismatch'
-          : 'Refresh needed'
-        : model.bridgeOnline
-          ? 'Needs attention'
-          : 'Bridge offline';
-
+  locale: Locale;
+  onLocaleChange: (locale: Locale) => void;
+}) {
   return (
-    <div className={cn('glass-panel p-4', compact ? 'rounded-[24px]' : 'rounded-[28px] p-5')}>
-      <div className="flex items-start justify-between gap-4">
-        <div className="space-y-2">
-          <div className="inline-flex items-center gap-2 rounded-full bg-primary/10 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.22em] text-primary">
-            <Sparkles className="h-3.5 w-3.5" />
-            Power Automate Daily Cockpit
-          </div>
-          <div>
-            <h1 className={cn('font-semibold tracking-tight', compact ? 'text-xl' : 'text-2xl')}>
-              {model.statusLabel}
-            </h1>
-            <p className="max-w-3xl text-sm leading-6 text-muted-foreground">{model.statusMessage}</p>
-          </div>
-        </div>
-        <Badge variant={tone === 'good' ? 'good' : tone === 'warning' ? 'warning' : 'critical'}>{toneLabel}</Badge>
-      </div>
-    </div>
-  );
-};
-
-const QuickStat = ({
-  icon: Icon,
-  label,
-  tone,
-  value,
-}: {
-  icon: ComponentType<{ className?: string }>;
-  label: string;
-  tone?: 'default' | 'good' | 'warning';
-  value: string;
-}) => (
-  <div className="rounded-2xl border bg-white/80 px-3 py-3 shadow-sm">
-    <div className="flex items-center gap-3">
-      <div
-        className={cn(
-          'flex h-9 w-9 items-center justify-center rounded-2xl',
-          tone === 'good'
-            ? 'bg-success/10 text-success'
-            : tone === 'warning'
-              ? 'bg-warning/10 text-warning'
-              : 'bg-primary/10 text-primary',
-        )}
-      >
-        <Icon className="h-4.5 w-4.5" />
-      </div>
-      <div className="min-w-0">
-        <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">{label}</p>
-        <p className="mt-1 text-sm font-medium leading-5 text-foreground">{value}</p>
-      </div>
-    </div>
-  </div>
-);
-
-const DetailRow = ({
-  label,
-  mono,
-  value,
-}: {
-  label: string;
-  mono?: boolean;
-  value: string;
-}) => (
-  <div className="rounded-2xl border bg-muted/35 px-3 py-2.5">
-    <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">{label}</div>
-    <div className={cn('mt-1.5 text-sm font-medium text-foreground', mono && 'font-mono text-xs')}>{value}</div>
-  </div>
-);
-
-const FlowContextCard = ({
-  caption,
-  flow,
-  icon: Icon,
-}: {
-  caption: string;
-  flow: DashboardFlowReference | null;
-  icon: ComponentType<{ className?: string }>;
-}) => (
-  <Card>
-    <CardHeader className="pb-3">
-      <div className="flex items-start justify-between gap-3">
-        <div>
-          <p className="kicker">{caption}</p>
-          <CardTitle className="mt-2 text-base">{flow?.displayName || 'No flow available'}</CardTitle>
-        </div>
-        <div className="rounded-2xl bg-primary/10 p-2 text-primary">
-          <Icon className="h-4.5 w-4.5" />
-        </div>
-      </div>
-    </CardHeader>
-    <CardContent className="grid gap-3">
-      <DetailRow label="Flow ID" mono value={formatShortId(flow?.flowId)} />
-      <DetailRow label="Environment" value={flow?.envId || 'Not available'} />
-      <div className="flex flex-wrap gap-2">
-        <Badge variant={accessTone(flow?.accessScope)}>{flow?.accessScope || 'No access scope'}</Badge>
-        {flow?.selectionSource ? <Badge variant="neutral">{flow.selectionSource}</Badge> : null}
-        {flow?.isPinned ? <Badge variant="primary">Pinned</Badge> : null}
-      </div>
-    </CardContent>
-  </Card>
-);
-
-const RunCard = ({ model }: { model: DashboardModel }) => (
-  <Card>
-    <CardHeader className="pb-3">
-      <div className="flex items-start justify-between gap-3">
-        <div>
-          <p className="kicker">Run health</p>
-          <CardTitle className="mt-2 text-base">Latest execution</CardTitle>
-          <CardDescription className="mt-2">Focused on the last known run for the selected target.</CardDescription>
-        </div>
-        <div className="rounded-2xl bg-primary/10 p-2 text-primary">
-          <Activity className="h-4.5 w-4.5" />
-        </div>
-      </div>
-    </CardHeader>
-    <CardContent className="grid gap-3">
-      <DetailRow label="Status" value={model.lastRun?.status || 'No run cached'} />
-      <DetailRow label="Run ID" mono value={formatShortId(model.lastRun?.runId)} />
-      <DetailRow label="Started" value={formatDateTime(model.lastRun?.startTime)} />
-      <DetailRow label="Failed action" value={model.lastRun?.failedActionName || 'No failed action captured'} />
-    </CardContent>
-  </Card>
-);
-
-const UpdateCard = ({ model }: { model: DashboardModel }) => (
-  <Card>
-    <CardHeader className="pb-3">
-      <div className="flex items-start justify-between gap-3">
-        <div>
-          <p className="kicker">Change safety</p>
-          <CardTitle className="mt-2 text-base">Latest saved change</CardTitle>
-          <CardDescription className="mt-2">The most recent cached update and rollback context for this target.</CardDescription>
-        </div>
-        <div className="rounded-2xl bg-primary/10 p-2 text-primary">
-          <Gauge className="h-4.5 w-4.5" />
-        </div>
-      </div>
-    </CardHeader>
-    <CardContent className="grid gap-3">
-      <DetailRow label="Captured" value={formatDateTime(model.lastUpdate?.capturedAt)} />
-      <DetailRow
-        label="Change type"
-        value={
-          model.lastUpdate
-            ? model.lastUpdate.summary?.changedFlowBody
-              ? 'Logic changed'
-              : model.lastUpdate.summary?.changedDisplayName
-                ? 'Name only'
-                : 'Metadata only'
-            : 'No update cached'
-        }
-      />
-      <DetailRow label="Before" value={model.lastUpdate?.summary?.beforeDisplayName || 'No previous snapshot'} />
-      <DetailRow label="After" value={model.lastUpdate?.summary?.afterDisplayName || 'No updated snapshot'} />
-    </CardContent>
-  </Card>
-);
-
-const AttentionList = ({
-  items,
-  onAction,
-  pendingAction,
-}: {
-  items: DashboardAttentionItem[];
-  onAction: (action: DashboardAction) => void;
-  pendingAction: string | null;
-}) => (
-  <div className="space-y-3">
-    {items.map((item) => (
-      <Card className="border-white/60 bg-white/90" key={item.id}>
-        <CardContent className="flex items-start justify-between gap-4 px-4 py-4">
-          <div className="space-y-2">
-            <Badge variant={toneToBadgeVariant(item.severity)}>{item.severity}</Badge>
-            <div>
-              <h3 className="text-sm font-semibold leading-6">{item.title}</h3>
-              <p className="mt-1 text-sm leading-6 text-muted-foreground">{item.description}</p>
-            </div>
-          </div>
-          {item.actionType && item.actionLabel ? (
-            <Button
-              className="shrink-0"
-              onClick={() => {
-                const actionType = item.actionType;
-                if (!actionType) return;
-                onAction({ type: actionType });
-              }}
-              size="sm"
-              variant={item.severity === 'critical' ? 'default' : 'secondary'}
-            >
-              {pendingAction === item.actionType ? 'Working...' : item.actionLabel}
-            </Button>
-          ) : null}
-        </CardContent>
-      </Card>
-    ))}
-  </div>
-);
-
-const DiagnosticsCard = ({ model }: { model: DashboardModel }) => (
-  <Collapsible>
-    <Card>
-      <CardHeader className="pb-3">
-        <div className="flex items-start justify-between gap-3">
-          <div>
-            <p className="kicker">Diagnostics</p>
-            <CardTitle className="mt-2 text-base">Low-level bridge and capture details</CardTitle>
-          </div>
-          <CollapsibleTrigger asChild>
-            <Button size="sm" variant="ghost">
-              Toggle
-            </Button>
-          </CollapsibleTrigger>
-        </div>
-      </CardHeader>
-      <CollapsibleContent>
-        <CardContent className="grid gap-3">
-          <DetailRow label="Bridge mode" value={model.bridgeMode || 'Unavailable'} />
-          <DetailRow label="Token source" value={model.diagnostics.tokenSource || 'No token source yet'} />
-          <DetailRow label="Snapshot source" value={model.diagnostics.snapshotSource || 'No snapshot source yet'} />
-          <DetailRow label="Captured" value={formatDateTime(model.diagnostics.capturedAt)} />
-          <DetailRow label="Last sent" value={formatDateTime(model.diagnostics.lastSentAt)} />
-          <DetailRow label="Error" value={model.diagnostics.error || 'No active error'} />
-        </CardContent>
-      </CollapsibleContent>
-    </Card>
-  </Collapsible>
-);
-
-const ActionButton = ({
-  action,
-  disabled,
-  icon: Icon,
-  label,
-  onAction,
-  pendingAction,
-  variant,
-}: {
-  action: DashboardAction;
-  disabled?: boolean;
-  icon: ComponentType<{ className?: string }>;
-  label: string;
-  onAction: (action: DashboardAction) => void;
-  pendingAction: string | null;
-  variant: 'default' | 'outline' | 'secondary';
-}) => (
-  <Button disabled={disabled} onClick={() => onAction(action)} variant={variant}>
-    <Icon className="h-4 w-4" />
-    {pendingAction === action.type ? 'Working...' : label}
-  </Button>
-);
-
-const ActionGrid = ({
-  model,
-  onAction,
-  pendingAction,
-  includeOpenSidePanel,
-}: {
-  includeOpenSidePanel?: boolean;
-  model: DashboardModel;
-  onAction: (action: DashboardAction) => void;
-  pendingAction: string | null;
-}) => (
-  <div className="grid gap-3 sm:grid-cols-2">
-    <ActionButton action={{ type: 'refresh-current-tab' }} icon={RefreshCcw} label="Refresh capture" onAction={onAction} pendingAction={pendingAction} variant="default" />
-    <ActionButton
-      action={{ type: 'set-active-flow-from-tab' }}
-      disabled={!model.currentTab?.flowId}
-      icon={ArrowRightLeft}
-      label="Use current tab"
-      onAction={onAction}
-      pendingAction={pendingAction}
-      variant="secondary"
-    />
-    <ActionButton action={{ type: 'refresh-last-run' }} disabled={!model.hasSession} icon={Activity} label="Refresh run status" onAction={onAction} pendingAction={pendingAction} variant="secondary" />
-    <ActionButton action={{ type: 'revert-last-update' }} disabled={!model.lastUpdate} icon={RotateCcw} label="Revert last update" onAction={onAction} pendingAction={pendingAction} variant="outline" />
-    {includeOpenSidePanel ? (
-      <ActionButton action={{ type: 'open-side-panel' }} icon={ExternalLink} label="Open side panel" onAction={onAction} pendingAction={pendingAction} variant="outline" />
-    ) : null}
-  </div>
-);
-
-const SidebarFlowMiniList = ({
-  emptyMessage,
-  flows,
-  onAction,
-  pendingAction,
-}: {
-  emptyMessage: string;
-  flows: DashboardFlowReference[];
-  onAction: (action: DashboardAction) => void;
-  pendingAction: string | null;
-}) => {
-  if (flows.length === 0) {
-    return <p className="text-sm text-muted-foreground">{emptyMessage}</p>;
-  }
-
-  return (
-    <div className="space-y-2">
-      {flows.slice(0, 4).map((flow) => (
-        <button className="flex w-full items-center justify-between rounded-2xl border bg-white/60 px-3 py-2.5 text-left transition hover:bg-white" key={flow.flowId} onClick={() => onAction({ flowId: flow.flowId, type: 'set-active-flow' })} type="button">
-          <div className="min-w-0">
-            <div className="truncate text-sm font-medium">{flow.displayName}</div>
-            <div className="mt-1 font-mono text-[11px] text-muted-foreground">{formatShortId(flow.flowId)}</div>
-          </div>
-          <Badge variant={pendingAction === 'set-active-flow' ? 'primary' : accessTone(flow.accessScope)}>{flow.accessScope || 'flow'}</Badge>
+    <div className="inline-flex items-center gap-1 rounded-full border border-border bg-background p-1">
+      {LOCALE_OPTIONS.map((option) => (
+        <button
+          aria-label={option.id === 'en' ? 'Switch language to English' : 'Mudar idioma para português do Brasil'}
+          className={cn(
+            'inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-[10px] font-semibold transition-colors',
+            locale === option.id ? 'bg-foreground text-background' : 'text-muted-foreground hover:bg-secondary',
+          )}
+          key={option.id}
+          onClick={() => onLocaleChange(option.id)}
+          type="button"
+        >
+          <span aria-hidden="true" className="text-xs leading-none">
+            {option.flag}
+          </span>
+          {option.label}
         </button>
       ))}
     </div>
   );
-};
+}
 
-const FlowCatalogRow = ({
-  flow,
-  isActive,
-  isPinned,
-  onAction,
-  pendingAction,
-}: {
-  flow: FlowCatalogItem;
-  isActive: boolean;
-  isPinned: boolean;
-  onAction: (action: DashboardAction) => void;
-  pendingAction: string | null;
-}) => (
-  <div className="rounded-2xl border bg-white/85 px-4 py-3 shadow-sm transition hover:border-primary/30 hover:bg-white">
-    <div className="flex items-start justify-between gap-3">
-      <div className="min-w-0">
-        <div className="flex flex-wrap items-center gap-2">
-          <h3 className="text-sm font-semibold leading-6">{flow.displayName}</h3>
-          {isActive ? <Badge variant="good">Active</Badge> : null}
-          <Badge variant={accessTone(flow.accessScope)}>{flow.accessScope || 'access unknown'}</Badge>
-        </div>
-        <p className="mt-1 font-mono text-[11px] text-muted-foreground">{flow.flowId}</p>
-        <div className="mt-2 flex flex-wrap gap-3 text-xs text-muted-foreground">
-          {flow.state ? <span>State: {flow.state}</span> : null}
-          {flow.lastModifiedTime ? <span>Updated: {relativeFromNow(flow.lastModifiedTime)}</span> : null}
-          {flow.triggerTypes?.length ? <span>Trigger: {flow.triggerTypes[0]}</span> : null}
-        </div>
-      </div>
-      <div className="flex shrink-0 items-center gap-2">
-        <Button onClick={() => onAction({ flowId: flow.flowId, type: 'toggle-pinned-flow' })} size="icon" title={isPinned ? 'Unpin flow' : 'Pin flow'} variant="ghost">
-          {isPinned ? <PinOff className="h-4 w-4" /> : <Pin className="h-4 w-4" />}
-        </Button>
-        <Button onClick={() => onAction({ flowId: flow.flowId, type: 'set-active-flow' })} size="sm" variant={isActive ? 'outline' : 'secondary'}>
-          {pendingAction === 'set-active-flow' && isActive ? 'Active' : 'Target'}
-        </Button>
-      </div>
-    </div>
-  </div>
-);
-
-const CompactComparison = ({ model }: { model: DashboardModel }) => (
-  <Card>
-    <CardHeader className="pb-3">
-      <div className="flex items-start justify-between gap-3">
-        <div>
-          <p className="kicker">Target vs tab</p>
-          <CardTitle className="mt-2 text-base">Stay on the right flow</CardTitle>
-        </div>
-        <Badge variant={model.selectedTargetMismatch ? 'warning' : 'good'}>
-          {model.selectedTargetMismatch ? 'Different flows' : 'Aligned'}
-        </Badge>
-      </div>
-    </CardHeader>
-    <CardContent className="grid gap-3 sm:grid-cols-2">
-      <FlowContextCard caption="Selected target" flow={model.activeTarget} icon={Target} />
-      <FlowContextCard caption="Current tab" flow={model.currentTab} icon={Cable} />
-    </CardContent>
-  </Card>
-);
-
-export const PopupDashboardView = ({
+function PopupHeader({
+  locale,
   model,
-  onAction,
-  pendingAction,
+  onLocaleChange,
 }: {
-  model: DashboardModel;
-  onAction: (action: DashboardAction) => void;
-  pendingAction: string | null;
-}) => (
-  <div className="min-h-[720px] p-4">
-    <div className="mx-auto flex max-w-[500px] flex-col gap-4">
-      <SurfaceHeader compact model={model} />
-
-      <div className="grid grid-cols-2 gap-3">
-        <QuickStat icon={Server} label="Bridge" tone={model.bridgeOnline ? 'good' : 'warning'} value={model.bridgeOnline ? 'Online' : 'Offline'} />
-        <QuickStat icon={ShieldCheck} label="Legacy" tone={model.hasLegacyApi ? 'good' : 'warning'} value={model.hasLegacyApi ? 'Ready' : 'Needs refresh'} />
-        <QuickStat icon={Clock3} label="Captured" value={relativeFromNow(model.diagnostics.capturedAt)} />
-        <QuickStat icon={Database} label="Environment" value={model.diagnostics.envId || 'Unknown env'} />
-      </div>
-
-      <CompactComparison model={model} />
-
-      <Card>
-        <CardHeader className="pb-3">
-          <div className="flex items-start justify-between gap-3">
-            <div>
-              <p className="kicker">Attention</p>
-              <CardTitle className="mt-2 text-base">What needs your attention</CardTitle>
-            </div>
-            <AlertTriangle className="mt-1 h-4.5 w-4.5 text-warning" />
-          </div>
-        </CardHeader>
-        <CardContent>
-          <AttentionList items={model.attentionItems.slice(0, 1)} onAction={onAction} pendingAction={pendingAction} />
-        </CardContent>
-      </Card>
-
-      <div className="grid gap-4 sm:grid-cols-2">
-        <RunCard model={model} />
-        <UpdateCard model={model} />
-      </div>
-
-      <Card>
-        <CardHeader className="pb-3">
-          <p className="kicker">Actions</p>
-          <CardTitle className="mt-2 text-base">Safe next steps</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <ActionGrid includeOpenSidePanel model={model} onAction={onAction} pendingAction={pendingAction} />
-        </CardContent>
-      </Card>
-
-      <DiagnosticsCard model={model} />
-    </div>
-  </div>
-);
-
-const SidebarNav = ({
-  model,
-  onAction,
-  pendingAction,
-  section,
-  setSection,
-}: {
-  model: DashboardModel;
-  onAction: (action: DashboardAction) => void;
-  pendingAction: string | null;
-  section: SidePanelSection;
-  setSection: (section: SidePanelSection) => void;
-}) => {
-  const navItems: Array<{
-    icon: ComponentType<{ className?: string }>;
-    id: SidePanelSection;
-    label: string;
-    subtitle: string;
-  }> = [
-    { icon: Radar, id: 'today', label: 'Today', subtitle: 'Attention and signals' },
-    { icon: Target, id: 'current', label: 'Current', subtitle: 'Target, run, and safety' },
-    { icon: Database, id: 'flows', label: 'Flows', subtitle: 'Recent, pinned, and catalog' },
-    { icon: AlertTriangle, id: 'diagnostics', label: 'Diagnostics', subtitle: 'Bridge and capture internals' },
-  ];
+  locale: Locale;
+  model: Pick<DashboardModel, 'attentionItems' | 'bridgeOnline' | 'statusLabel' | 'statusMessage'>;
+  onLocaleChange: (locale: Locale) => void;
+}) {
+  const actionableCount = getActionableAttention(model).length;
 
   return (
-    <aside className="glass-panel flex h-[calc(100vh-3rem)] w-[284px] shrink-0 flex-col p-4">
-      <div className="space-y-4">
-        <div className="space-y-2">
-          <div className="inline-flex items-center gap-2 rounded-full bg-primary/10 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.22em] text-primary">
-            <Sparkles className="h-3.5 w-3.5" />
-            Power Automate
+    <div className="rounded-2xl border border-border bg-white px-4 py-3 shadow-sm">
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">PA cockpit</p>
+          <div className="mt-1 flex items-center gap-2">
+            <StatusDot pulse={model.bridgeOnline} status={model.bridgeOnline ? 'online' : actionableCount > 0 ? 'warning' : 'offline'} />
+            <h1 className="text-[15px] font-semibold text-foreground">{model.statusLabel}</h1>
           </div>
-          <div>
-            <h2 className="text-xl font-semibold tracking-tight">Daily cockpit</h2>
-            <p className="mt-1 text-sm leading-6 text-muted-foreground">
-              Context, safety, and the right next action for daily makers.
-            </p>
-          </div>
+          <p className="mt-1 text-[12px] leading-5 text-muted-foreground">{model.statusMessage}</p>
         </div>
+        <LocaleToggle locale={locale} onLocaleChange={onLocaleChange} />
+      </div>
+    </div>
+  );
+}
 
-        <div className="grid gap-2">
-          <QuickStat icon={Server} label="Bridge" tone={model.bridgeOnline ? 'good' : 'warning'} value={model.bridgeOnline ? 'Online' : 'Offline'} />
-          <QuickStat icon={ShieldCheck} label="Legacy" tone={model.hasLegacyApi ? 'good' : 'warning'} value={model.hasLegacyApi ? 'Ready' : 'Needs refresh'} />
-          <QuickStat icon={Clock3} label="Capture" value={relativeFromNow(model.diagnostics.capturedAt)} />
+function EmptyStateCard({
+  description,
+  icon: Icon,
+  title,
+}: {
+  description: string;
+  icon: React.ElementType;
+  title: string;
+}) {
+  return (
+    <div className="rounded-2xl border border-dashed border-border bg-white px-4 py-5">
+      <div className="flex items-start gap-3">
+        <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-secondary text-foreground">
+          <Icon className="h-4 w-4" />
+        </div>
+        <div className="min-w-0">
+          <p className="text-[13px] font-semibold text-foreground">{title}</p>
+          <p className="mt-1 text-[12px] leading-5 text-muted-foreground">{description}</p>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function CurrentFlowPanel({
+  locale,
+  model,
+  onAction,
+}: {
+  locale: Locale;
+  model: DashboardModel;
+  onAction: (action: DashboardAction) => void;
+}) {
+  const selectedTarget = getDisplayedTarget(model);
+  const showTabMismatch = Boolean(model.selectedTargetMismatch && model.currentTab);
+
+  if (!selectedTarget) {
+    return (
+      <EmptyStateCard
+        description={t(
+          locale,
+          'Open a Power Automate flow page so the extension can capture the right context.',
+          'Abra uma página de fluxo do Power Automate para a extensão capturar o contexto correto.',
+        )}
+        icon={Workflow}
+        title={t(locale, 'No flow selected', 'Nenhum fluxo selecionado')}
+      />
+    );
+  }
+
+  return (
+    <div className="rounded-2xl border border-border bg-white p-4 shadow-sm">
+      <div className="flex items-start gap-3">
+        <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-primary/10 text-primary">
+          <Workflow className="h-4 w-4" />
+        </div>
+        <div className="min-w-0 flex-1">
+          <SectionLabel>{t(locale, 'Selected target', 'Fluxo selecionado')}</SectionLabel>
+          <p className="mt-1 truncate text-[14px] font-semibold text-foreground">{selectedTarget.displayName}</p>
+          <p className="mt-1 truncate font-mono text-[11px] text-muted-foreground">{truncate(selectedTarget.flowId, 28)}</p>
+          <div className="mt-3 flex flex-wrap items-center gap-1.5">
+            <AccessScopeBadge locale={locale} scope={selectedTarget.accessScope} />
+            <PinBadge locale={locale} pinned={selectedTarget.isPinned} />
+          </div>
         </div>
       </div>
 
-      <Separator className="my-4" />
+      {showTabMismatch ? (
+        <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50 px-3 py-3">
+          <div className="flex items-start justify-between gap-3">
+            <div className="min-w-0">
+              <p className="text-[11px] font-semibold uppercase tracking-wide text-amber-700">
+                {t(locale, 'Browser tab', 'Aba atual')}
+              </p>
+              <p className="mt-1 truncate text-[13px] font-medium text-amber-900">{model.currentTab?.displayName}</p>
+              <p className="mt-1 text-[12px] text-amber-800/80">
+                {t(
+                  locale,
+                  'The open tab is different from the selected target.',
+                  'A aba aberta está diferente do fluxo selecionado.',
+                )}
+              </p>
+            </div>
+            <Button className="shrink-0" onClick={() => onAction({ type: 'set-active-flow-from-tab' })} size="sm" variant="outline">
+              {t(locale, 'Use tab', 'Usar aba')}
+            </Button>
+          </div>
+        </div>
+      ) : null}
+    </div>
+  );
+}
 
-      <div className="space-y-2">
-        {navItems.map((item) => (
+function RecentActivityPanel({
+  className,
+  locale,
+  model,
+}: {
+  className?: string;
+  locale: Locale;
+  model: DashboardModel;
+}) {
+  return (
+    <div className={cn('space-y-2', className)}>
+      <SectionLabel>{t(locale, 'Recent activity', 'Atividade recente')}</SectionLabel>
+      <div className="grid gap-2 sm:grid-cols-2">
+        <LastRunCard locale={locale} run={model.lastRun} />
+        <LastUpdateCard locale={locale} update={model.lastUpdate} />
+      </div>
+    </div>
+  );
+}
+
+function QuickActionsPanel({
+  includeOpenPanel,
+  locale,
+  model,
+  onAction,
+}: {
+  includeOpenPanel?: boolean;
+  locale: Locale;
+  model: DashboardModel;
+  onAction: (action: DashboardAction) => void;
+}) {
+  return (
+    <div className="rounded-2xl border border-border bg-white p-4 shadow-sm">
+      <SectionLabel>{t(locale, 'Quick actions', 'Ações rápidas')}</SectionLabel>
+      <div className="mt-3">
+        <ActionGroup
+          canUseCurrentTab={Boolean(model.currentTab?.flowId)}
+          hasLastUpdate={Boolean(model.lastUpdate)}
+          hasSession={model.hasSession}
+          includeOpenPanel={includeOpenPanel}
+          locale={locale}
+          onAction={onAction}
+        />
+      </div>
+      {includeOpenPanel ? (
+        <p className="mt-3 text-[11px] leading-5 text-muted-foreground">
+          {t(
+            locale,
+            'Open the side panel when you need the full review or system details.',
+            'Abra o painel lateral quando precisar da revisão completa ou dos detalhes do sistema.',
+          )}
+        </p>
+      ) : null}
+    </div>
+  );
+}
+
+function PopupDashboard({
+  locale,
+  model,
+  onAction,
+  onLocaleChange,
+}: {
+  locale: Locale;
+  model: DashboardModel;
+  onAction: (action: DashboardAction) => void;
+  onLocaleChange: (locale: Locale) => void;
+}) {
+  const topAttention = getActionableAttention(model)[0] || null;
+
+  return (
+    <div className="flex w-[432px] min-h-[560px] max-h-[640px] flex-col bg-background font-sans text-foreground">
+      <div className="flex flex-col gap-3 p-4">
+        <PopupHeader locale={locale} model={model} onLocaleChange={onLocaleChange} />
+        <CurrentFlowPanel locale={locale} model={model} onAction={onAction} />
+        {topAttention ? (
+          <AttentionBannerSingle
+            item={topAttention}
+            onAction={() => (topAttention.actionType ? onAction({ type: topAttention.actionType }) : undefined)}
+          />
+        ) : null}
+        <QuickActionsPanel includeOpenPanel locale={locale} model={model} onAction={onAction} />
+        <RecentActivityPanel locale={locale} model={model} />
+        <DiagnosticsBlock
+          bridgeMode={model.bridgeMode}
+          bridgeOnline={model.bridgeOnline}
+          collapsible
+          diagnostics={model.diagnostics}
+          locale={locale}
+        />
+      </div>
+    </div>
+  );
+}
+
+function SidePanelSidebar({
+  activeSection,
+  locale,
+  model,
+  onSectionChange,
+}: {
+  activeSection: SidePanelSection;
+  locale: Locale;
+  model: DashboardModel;
+  onSectionChange: (section: SidePanelSection) => void;
+}) {
+  const navItems: Array<{ icon: React.ElementType; id: SidePanelSection; label: string }> = [
+    { icon: Shield, id: 'today', label: t(locale, 'Today', 'Hoje') },
+    { icon: LayoutList, id: 'flows', label: t(locale, 'Flows', 'Fluxos') },
+    { icon: History, id: 'review', label: t(locale, 'Review', 'Revisão') },
+    { icon: Globe2, id: 'system', label: t(locale, 'System', 'Sistema') },
+  ];
+  const selectedTarget = getDisplayedTarget(model);
+  const actionableCount = getActionableAttention(model).length;
+
+  return (
+    <aside className="flex h-full w-[224px] flex-shrink-0 flex-col border-r border-border bg-[#f4f7fb] px-4 py-4">
+      <div className="rounded-2xl border border-border bg-white px-4 py-3 shadow-sm">
+        <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">PA cockpit</p>
+        <div className="mt-2 flex items-center gap-2">
+          <StatusDot pulse={model.bridgeOnline} status={model.bridgeOnline ? 'online' : actionableCount > 0 ? 'warning' : 'offline'} />
+          <p className="text-[14px] font-semibold text-foreground">{model.statusLabel}</p>
+        </div>
+        <p className="mt-2 text-[12px] leading-5 text-muted-foreground">{truncate(model.statusMessage, 120)}</p>
+      </div>
+
+      <div className="mt-3 rounded-2xl border border-border bg-white px-4 py-3 shadow-sm">
+        <SectionLabel>{t(locale, 'Selected target', 'Fluxo selecionado')}</SectionLabel>
+        <p className="mt-1 truncate text-[13px] font-medium text-foreground">
+          {selectedTarget?.displayName ?? t(locale, 'No flow selected', 'Nenhum fluxo selecionado')}
+        </p>
+      </div>
+
+      <nav className="mt-4 flex flex-col gap-1.5">
+        {navItems.map(({ icon: Icon, id, label }) => (
           <button
             className={cn(
-              'flex w-full items-start gap-3 rounded-2xl px-3 py-3 text-left transition',
-              section === item.id ? 'bg-primary text-primary-foreground shadow-lg shadow-primary/15' : 'bg-white/60 hover:bg-white',
+              'flex items-center gap-3 rounded-xl px-3 py-2.5 text-left text-[13px] font-medium transition-colors',
+              activeSection === id ? 'bg-foreground text-background' : 'text-foreground hover:bg-white',
             )}
-            key={item.id}
-            onClick={() => setSection(item.id)}
+            key={id}
+            onClick={() => onSectionChange(id)}
             type="button"
           >
-            <item.icon className={cn('mt-0.5 h-4.5 w-4.5 shrink-0', section === item.id ? 'text-primary-foreground' : 'text-primary')} />
-            <div className="min-w-0">
-              <div className="text-sm font-semibold">{item.label}</div>
-              <div className={cn('mt-1 text-xs', section === item.id ? 'text-primary-foreground/80' : 'text-muted-foreground')}>
-                {item.subtitle}
-              </div>
-            </div>
+            <Icon className="h-4 w-4 flex-shrink-0" />
+            <span className="flex-1">{label}</span>
+            {id === 'today' && actionableCount > 0 ? (
+              <span className="rounded-full bg-amber-500 px-1.5 py-0.5 text-[10px] font-semibold text-white">
+                {actionableCount}
+              </span>
+            ) : null}
           </button>
         ))}
-      </div>
-
-      <Separator className="my-4" />
-
-      <div className="space-y-4 overflow-hidden">
-        <div>
-          <div className="mb-2 text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">Pinned</div>
-          <SidebarFlowMiniList emptyMessage="No pinned flows." flows={model.pinnedFlows} onAction={onAction} pendingAction={pendingAction} />
-        </div>
-        <div>
-          <div className="mb-2 text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">Recent</div>
-          <SidebarFlowMiniList emptyMessage="No recent flows." flows={model.recentFlows} onAction={onAction} pendingAction={pendingAction} />
-        </div>
-      </div>
+      </nav>
     </aside>
   );
-};
+}
 
-export const SidePanelDashboardView = ({
+function TodaySection({
+  locale,
   model,
   onAction,
-  pendingAction,
 }: {
+  locale: Locale;
   model: DashboardModel;
   onAction: (action: DashboardAction) => void;
-  pendingAction: string | null;
-}) => {
-  const [query, setQuery] = useState('');
-  const [section, setSection] = useState<SidePanelSection>('today');
-
-  const filteredFlows = useMemo(() => {
-    const normalized = query.trim().toLowerCase();
-    if (!normalized) return model.catalogFlows;
-
-    return model.catalogFlows.filter((flow) => flow.displayName.toLowerCase().includes(normalized));
-  }, [model.catalogFlows, query]);
+}) {
+  const actionableItems = getActionableAttention(model);
 
   return (
-    <div className="min-h-screen p-6">
-      <div className="mx-auto flex max-w-[1440px] gap-6">
-        <SidebarNav model={model} onAction={onAction} pendingAction={pendingAction} section={section} setSection={setSection} />
-
-        <main className="min-w-0 flex-1">
-          <div className="space-y-5">
-            <SurfaceHeader model={model} />
-
-            {section === 'today' ? (
-              <div className="grid gap-5 xl:grid-cols-[1.15fr_0.85fr]">
-                <div className="space-y-4">
-                  <AttentionList items={model.attentionItems} onAction={onAction} pendingAction={pendingAction} />
-                </div>
-                <div className="grid gap-4">
-                  <CompactComparison model={model} />
-                  <Card>
-                    <CardHeader>
-                      <p className="kicker">Today at a glance</p>
-                      <CardTitle className="mt-2 text-base">Your current operating context</CardTitle>
-                    </CardHeader>
-                    <CardContent className="grid gap-3 md:grid-cols-2">
-                      <DetailRow label="Current status" value={model.statusLabel} />
-                      <DetailRow label="Bridge mode" value={model.bridgeMode || 'Unavailable'} />
-                      <DetailRow label="Last run" value={model.lastRunStatus || 'No recent run'} />
-                      <DetailRow label="Pinned flows" value={`${model.pinnedFlows.length}`} />
-                    </CardContent>
-                  </Card>
-                </div>
-              </div>
-            ) : null}
-
-            {section === 'current' ? (
-              <div className="space-y-5">
-                <CompactComparison model={model} />
-                <div className="grid gap-4 xl:grid-cols-2">
-                  <RunCard model={model} />
-                  <UpdateCard model={model} />
-                </div>
-                <Card>
-                  <CardHeader>
-                    <p className="kicker">Actions</p>
-                    <CardTitle className="mt-2 text-base">Safe next steps for this flow</CardTitle>
-                  </CardHeader>
-                  <CardContent>
-                    <ActionGrid model={model} onAction={onAction} pendingAction={pendingAction} />
-                  </CardContent>
-                </Card>
-              </div>
-            ) : null}
-
-            {section === 'flows' ? (
-              <div className="grid gap-5 xl:grid-cols-[340px_1fr]">
-                <Card className="h-fit">
-                  <CardHeader>
-                    <p className="kicker">Working set</p>
-                    <CardTitle className="mt-2 text-base">Pinned and recent flows</CardTitle>
-                    <CardDescription className="mt-2">
-                      Keep your day-to-day flows close and retarget the MCP without leaving the cockpit.
-                    </CardDescription>
-                  </CardHeader>
-                  <CardContent className="space-y-4">
-                    <Input onChange={(event) => setQuery(event.target.value)} placeholder="Search flows by name..." value={query} />
-
-                    <div className="space-y-2">
-                      <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">Pinned</div>
-                      <SidebarFlowMiniList emptyMessage="No pinned flows." flows={model.pinnedFlows} onAction={onAction} pendingAction={pendingAction} />
-                    </div>
-
-                    <Separator />
-
-                    <div className="space-y-2">
-                      <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">Recent</div>
-                      <SidebarFlowMiniList emptyMessage="No recent flows." flows={model.recentFlows} onAction={onAction} pendingAction={pendingAction} />
-                    </div>
-                  </CardContent>
-                </Card>
-
-                <Card>
-                  <CardHeader>
-                    <div className="flex items-center justify-between gap-3">
-                      <div>
-                        <p className="kicker">Environment catalog</p>
-                        <CardTitle className="mt-2 text-base">Flows available to this session</CardTitle>
-                        <CardDescription className="mt-2">
-                          {model.flowCatalogMessage || 'A denser list for retargeting, triage, and daily navigation.'}
-                        </CardDescription>
-                      </div>
-                      <Badge variant="neutral">{filteredFlows.length} visible</Badge>
-                    </div>
-                  </CardHeader>
-                  <CardContent>
-                    <ScrollArea className="h-[640px] pr-3">
-                      <div className="grid gap-3">
-                        {filteredFlows.map((flow) => (
-                          <FlowCatalogRow
-                            flow={flow}
-                            isActive={model.activeTarget?.flowId === flow.flowId}
-                            isPinned={model.pinnedFlows.some((item) => item.flowId === flow.flowId)}
-                            key={flow.flowId}
-                            onAction={onAction}
-                            pendingAction={pendingAction}
-                          />
-                        ))}
-                      </div>
-                    </ScrollArea>
-                  </CardContent>
-                </Card>
-              </div>
-            ) : null}
-
-            {section === 'diagnostics' ? <DiagnosticsCard model={model} /> : null}
-          </div>
-        </main>
+    <div className="space-y-5">
+      <div>
+        <h2 className="text-xl font-semibold text-foreground">{t(locale, 'Today', 'Hoje')}</h2>
+        <p className="mt-1 text-sm text-muted-foreground">{model.statusMessage}</p>
       </div>
-    </div>
-  );
-};
 
-export const LoadingView = ({ surface }: { surface: 'popup' | 'sidepanel' }) => (
-  <div className={cn('p-4', surface === 'sidepanel' && 'min-h-screen p-6')}>
-    <div className="mx-auto flex max-w-[1440px] flex-col gap-4">
-      <Skeleton className="h-28 rounded-[28px]" />
-      <div className={cn('grid gap-4', surface === 'sidepanel' ? 'xl:grid-cols-[284px_1fr]' : 'grid-cols-1')}>
-        {surface === 'sidepanel' ? <Skeleton className="h-[760px] rounded-[28px]" /> : null}
-        <div className="grid gap-4">
-          <Skeleton className="h-44 rounded-[24px]" />
-          <Skeleton className="h-60 rounded-[24px]" />
-          <Skeleton className="h-56 rounded-[24px]" />
+      <div className="grid gap-5 xl:grid-cols-[1.05fr_0.95fr]">
+        <div className="space-y-4">
+          <CurrentFlowPanel locale={locale} model={model} onAction={onAction} />
+
+          {actionableItems.length > 0 ? (
+            <div className="space-y-2">
+              <SectionLabel>
+                {t(locale, `Needs attention (${actionableItems.length})`, `Requer atenção (${actionableItems.length})`)}
+              </SectionLabel>
+              <div className="space-y-2">
+                {actionableItems.map((item) => (
+                  <AttentionItemRow
+                    item={item}
+                    key={item.id}
+                    locale={locale}
+                    onAction={() => (item.actionType ? onAction({ type: item.actionType }) : undefined)}
+                  />
+                ))}
+              </div>
+            </div>
+          ) : (
+            <EmptyStateCard
+              description={t(
+                locale,
+                'The selected target, browser session, and latest checks are aligned.',
+                'O fluxo selecionado, a sessão do navegador e as últimas checagens estão alinhados.',
+              )}
+              icon={CheckCircle2}
+              title={t(locale, 'Everything looks ready', 'Tudo parece pronto')}
+            />
+          )}
+        </div>
+
+        <div className="space-y-4">
+          <QuickActionsPanel locale={locale} model={model} onAction={onAction} />
+          <SignalGrid locale={locale} model={model} />
+          <RecentActivityPanel locale={locale} model={model} />
         </div>
       </div>
     </div>
-  </div>
-);
+  );
+}
 
-export const ErrorView = ({
+function FlowsSection({
+  locale,
+  model,
+  onAction,
+}: {
+  locale: Locale;
+  model: DashboardModel;
+  onAction: (action: DashboardAction) => void;
+}) {
+  const [search, setSearch] = useState('');
+  const filteredCatalog = useMemo(
+    () => model.catalogFlows.filter((flow) => flow.displayName.toLowerCase().includes(search.toLowerCase())),
+    [model.catalogFlows, search],
+  );
+  const activeFlowId = model.activeTarget?.flowId || model.currentTab?.flowId || null;
+
+  return (
+    <div className="space-y-5">
+      <div className="flex flex-col gap-3 rounded-2xl border border-border bg-white px-4 py-4 shadow-sm lg:flex-row lg:items-center lg:justify-between">
+        <div>
+          <h2 className="text-xl font-semibold text-foreground">{t(locale, 'Flows', 'Fluxos')}</h2>
+          <p className="mt-1 text-sm text-muted-foreground">
+            {model.flowCatalogMessage ??
+              t(
+                locale,
+                'Browse the environment catalog and retarget the extension when needed.',
+                'Navegue pelo catálogo do ambiente e redefina o fluxo quando precisar.',
+              )}
+          </p>
+        </div>
+
+        <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row">
+          <Input
+            onChange={(event: ChangeEvent<HTMLInputElement>) => setSearch(event.target.value)}
+            placeholder={t(locale, 'Search flows...', 'Buscar fluxos...')}
+            value={search}
+          />
+          <Button className="rounded-xl" onClick={() => onAction({ type: 'refresh-flows' })} variant="outline">
+            <RefreshCcw className="h-4 w-4" />
+            {t(locale, 'Refresh', 'Atualizar')}
+          </Button>
+        </div>
+      </div>
+
+      {(model.pinnedFlows.length > 0 || model.recentFlows.length > 0) && !search ? (
+        <div className="grid gap-4 xl:grid-cols-2">
+          {model.pinnedFlows.length > 0 ? (
+            <div className="space-y-2">
+              <SectionLabel>{t(locale, 'Pinned', 'Fixados')}</SectionLabel>
+              <div className="space-y-2">
+                {model.pinnedFlows.map((flow) => (
+                  <FlowRefRow
+                    actions={
+                      <button
+                        className="rounded-lg p-1.5 text-muted-foreground transition-colors hover:bg-amber-500/10 hover:text-amber-500"
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          onAction({ flowId: flow.flowId, type: 'toggle-pinned-flow' });
+                        }}
+                        title={t(locale, 'Unpin flow', 'Desafixar fluxo')}
+                        type="button"
+                      >
+                        {t(locale, 'Unpin', 'Desafixar')}
+                      </button>
+                    }
+                    flow={flow}
+                    isActive={activeFlowId === flow.flowId}
+                    key={flow.flowId}
+                    locale={locale}
+                    onClick={() => onAction({ flowId: flow.flowId, type: 'set-active-flow' })}
+                  />
+                ))}
+              </div>
+            </div>
+          ) : null}
+
+          {model.recentFlows.length > 0 ? (
+            <div className="space-y-2">
+              <SectionLabel>{t(locale, 'Recent', 'Recentes')}</SectionLabel>
+              <div className="space-y-2">
+                {model.recentFlows.map((flow) => (
+                  <FlowRefRow
+                    actions={
+                      <button
+                        className="rounded-lg p-1.5 text-muted-foreground transition-colors hover:bg-amber-500/10 hover:text-amber-500"
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          onAction({ flowId: flow.flowId, type: 'toggle-pinned-flow' });
+                        }}
+                        title={t(locale, 'Pin flow', 'Fixar fluxo')}
+                        type="button"
+                      >
+                        {t(locale, 'Pin', 'Fixar')}
+                      </button>
+                    }
+                    flow={flow}
+                    isActive={activeFlowId === flow.flowId}
+                    key={flow.flowId}
+                    locale={locale}
+                    onClick={() => onAction({ flowId: flow.flowId, type: 'set-active-flow' })}
+                  />
+                ))}
+              </div>
+            </div>
+          ) : null}
+        </div>
+      ) : null}
+
+      <div className="space-y-2">
+        <SectionLabel>{t(locale, `All flows (${filteredCatalog.length})`, `Todos os fluxos (${filteredCatalog.length})`)}</SectionLabel>
+        <div className="space-y-2">
+          {filteredCatalog.length === 0 ? (
+            <EmptyStateCard
+              description={t(locale, 'Try a different search term.', 'Tente um termo de busca diferente.')}
+              icon={LayoutList}
+              title={t(locale, 'No matching flows', 'Nenhum fluxo encontrado')}
+            />
+          ) : (
+            filteredCatalog.map((flow) => (
+              <FlowRefRow
+                actions={
+                  <div className="flex items-center gap-1">
+                    <button
+                      className="rounded-lg p-1.5 text-muted-foreground transition-colors hover:bg-primary/10 hover:text-primary"
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        onAction({ flowId: flow.flowId, type: 'set-active-flow' });
+                      }}
+                      title={t(locale, 'Choose this flow', 'Escolher este fluxo')}
+                      type="button"
+                    >
+                      {t(locale, 'Select', 'Selecionar')}
+                    </button>
+                    <button
+                      className="rounded-lg p-1.5 text-muted-foreground transition-colors hover:bg-amber-500/10 hover:text-amber-500"
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        onAction({ flowId: flow.flowId, type: 'toggle-pinned-flow' });
+                      }}
+                      title={t(locale, 'Pin or unpin', 'Fixar ou desafixar')}
+                      type="button"
+                    >
+                      {t(locale, 'Pin', 'Fixar')}
+                    </button>
+                  </div>
+                }
+                flow={{
+                  accessScope: flow.accessScope,
+                  displayName: flow.displayName,
+                  envId: flow.envId,
+                  flowId: flow.flowId,
+                  isPinned: model.pinnedFlows.some((item) => item.flowId === flow.flowId),
+                  isRecent: model.recentFlows.some((item) => item.flowId === flow.flowId),
+                }}
+                isActive={activeFlowId === flow.flowId}
+                key={flow.flowId}
+                locale={locale}
+                onClick={() => onAction({ flowId: flow.flowId, type: 'set-active-flow' })}
+              />
+            ))
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+export function ReviewSection({
+  locale,
+  model,
+  onAction,
+}: {
+  locale: Locale;
+  model: DashboardModel;
+  onAction: (action: DashboardAction) => void;
+}) {
+  return (
+    <div className="space-y-5">
+      <div className="flex flex-col gap-3 rounded-2xl border border-border bg-white px-4 py-4 shadow-sm sm:flex-row sm:items-center sm:justify-between">
+        <div>
+          <h2 className="text-xl font-semibold text-foreground">{t(locale, 'Review', 'Revisão')}</h2>
+          <p className="mt-1 text-sm text-muted-foreground">
+            {t(
+              locale,
+              'Inspect the latest saved change before editing again.',
+              'Inspecione a última mudança salva antes de editar novamente.',
+            )}
+          </p>
+        </div>
+
+        {model.lastUpdate ? (
+          <Button onClick={() => onAction({ type: 'revert-last-update' })} variant="outline">
+            {t(locale, 'Undo change', 'Desfazer')}
+          </Button>
+        ) : null}
+      </div>
+
+      {model.lastUpdate ? (
+        <div className="grid gap-4 xl:grid-cols-[320px_1fr]">
+          <div className="space-y-4">
+            <CurrentFlowPanel locale={locale} model={model} onAction={onAction} />
+            <LastUpdateCard locale={locale} update={model.lastUpdate} />
+          </div>
+          <LastUpdateReview locale={locale} update={model.lastUpdate} />
+        </div>
+      ) : (
+        <EmptyStateCard
+          description={t(
+            locale,
+            'A detailed review appears here after the extension captures a saved change.',
+            'Uma revisão detalhada aparece aqui depois que a extensão captura uma mudança salva.',
+          )}
+          icon={History}
+          title={t(locale, 'No cached change review', 'Nenhuma revisão em cache')}
+        />
+      )}
+    </div>
+  );
+}
+
+export function SystemSection({
+  locale,
+  model,
+  onLocaleChange,
+}: {
+  locale: Locale;
+  model: DashboardModel;
+  onLocaleChange: (locale: Locale) => void;
+}) {
+  return (
+    <div className="space-y-5">
+      <div>
+        <h2 className="text-xl font-semibold text-foreground">{t(locale, 'System', 'Sistema')}</h2>
+        <p className="mt-1 text-sm text-muted-foreground">
+          {t(
+            locale,
+            'Technical details stay here so the main workspace can stay focused.',
+            'Os detalhes técnicos ficam aqui para o espaço principal continuar focado.',
+          )}
+        </p>
+      </div>
+
+      <div className="grid gap-4 xl:grid-cols-[280px_1fr]">
+        <div className="rounded-2xl border border-border bg-white p-4 shadow-sm">
+          <div className="flex items-center gap-2">
+            <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-secondary text-foreground">
+              <Languages className="h-4 w-4" />
+            </div>
+            <div>
+              <SectionLabel>{t(locale, 'Language', 'Idioma')}</SectionLabel>
+              <p className="mt-1 text-[13px] font-medium text-foreground">
+                {t(locale, 'Interface language', 'Idioma da interface')}
+              </p>
+            </div>
+          </div>
+          <div className="mt-4">
+            <LocaleToggle locale={locale} onLocaleChange={onLocaleChange} />
+          </div>
+        </div>
+
+        <SignalGrid locale={locale} model={model} />
+      </div>
+
+      <DiagnosticsBlock
+        bridgeMode={model.bridgeMode}
+        bridgeOnline={model.bridgeOnline}
+        collapsible={false}
+        diagnostics={model.diagnostics}
+        locale={locale}
+      />
+    </div>
+  );
+}
+
+export function PopupDashboardView({
+  locale,
+  model,
+  onAction,
+  onLocaleChange,
+}: {
+  locale: Locale;
+  model: DashboardModel;
+  onAction: (action: DashboardAction) => void;
+  onLocaleChange: (locale: Locale) => void;
+}) {
+  return <PopupDashboard locale={locale} model={model} onAction={onAction} onLocaleChange={onLocaleChange} />;
+}
+
+export function SidePanelDashboardView({
+  initialSection = 'today',
+  locale,
+  model,
+  onAction,
+  onLocaleChange,
+}: {
+  initialSection?: SidePanelSection;
+  locale: Locale;
+  model: DashboardModel;
+  onAction: (action: DashboardAction) => void;
+  onLocaleChange: (locale: Locale) => void;
+}) {
+  const [activeSection, setActiveSection] = useState<SidePanelSection>(initialSection);
+
+  const sections: Record<SidePanelSection, ReactNode> = {
+    flows: <FlowsSection locale={locale} model={model} onAction={onAction} />,
+    review: <ReviewSection locale={locale} model={model} onAction={onAction} />,
+    system: <SystemSection locale={locale} model={model} onLocaleChange={onLocaleChange} />,
+    today: <TodaySection locale={locale} model={model} onAction={onAction} />,
+  };
+
+  return (
+    <div className="flex h-full min-h-[600px] w-full overflow-hidden bg-background font-sans text-foreground">
+      <SidePanelSidebar activeSection={activeSection} locale={locale} model={model} onSectionChange={setActiveSection} />
+      <main className="min-w-0 flex-1 overflow-y-auto p-5">{sections[activeSection]}</main>
+    </div>
+  );
+}
+
+export function LoadingView({
+  locale,
+  onLocaleChange,
+  surface,
+}: {
+  locale: Locale;
+  onLocaleChange: (locale: Locale) => void;
+  surface: Surface;
+}) {
+  return (
+    <div className={cn(surface === 'sidepanel' ? 'p-5' : 'w-[432px] p-4')}>
+      <div className="space-y-3">
+        <div className="flex justify-end">
+          <LocaleToggle locale={locale} onLocaleChange={onLocaleChange} />
+        </div>
+        <Skeleton className="h-24 rounded-2xl" />
+        <Skeleton className="h-40 rounded-2xl" />
+        <Skeleton className="h-32 rounded-2xl" />
+        <Skeleton className="h-28 rounded-2xl" />
+      </div>
+    </div>
+  );
+}
+
+export function ErrorView({
   bridgeHealth,
   error,
+  locale,
+  onLocaleChange,
   onRetry,
   surface,
 }: {
   bridgeHealth: HealthPayload | null;
   error: string;
+  locale: Locale;
+  onLocaleChange: (locale: Locale) => void;
   onRetry: () => void;
-  surface: 'popup' | 'sidepanel';
-}) => (
-  <div className={cn('p-4', surface === 'sidepanel' && 'min-h-screen p-6')}>
-    <div className="mx-auto max-w-3xl">
-      <Card className="glass-panel border-destructive/20 bg-white/90">
-        <CardHeader>
+  surface: Surface;
+}) {
+  return (
+    <div className={cn(surface === 'sidepanel' ? 'p-5' : 'w-[432px] p-4')}>
+      <div className="space-y-3">
+        <div className="flex justify-end">
+          <LocaleToggle locale={locale} onLocaleChange={onLocaleChange} />
+        </div>
+        <div className="rounded-2xl border border-border bg-white p-4 shadow-sm">
           <div className="flex items-start justify-between gap-4">
             <div>
-              <p className="kicker">Extension recovery</p>
-              <CardTitle className="mt-2 text-2xl">The background worker needs attention</CardTitle>
-              <CardDescription className="mt-3 max-w-2xl text-sm leading-6">
-                {bridgeHealth?.ok
-                  ? 'The local bridge is reachable, but the extension background worker did not answer correctly.'
-                  : 'The popup cannot talk to the extension background or the local bridge right now.'}
-              </CardDescription>
+              <p className="text-[11px] font-semibold uppercase tracking-wide text-rose-600">
+                {t(locale, 'Connection issue', 'Problema de conexão')}
+              </p>
+              <h2 className="mt-1 text-base font-semibold text-foreground">
+                {t(locale, 'Could not open the extension workspace.', 'Não foi possível abrir o espaço da extensão.')}
+              </h2>
+              <p className="mt-1 text-[12px] leading-relaxed text-muted-foreground">{error}</p>
             </div>
-            <Badge variant="critical">Needs reload</Badge>
+            <div className="rounded-full bg-rose-50 px-2.5 py-1 text-[11px] font-semibold text-rose-600">
+              {bridgeHealth?.ok ? t(locale, 'Bridge ok', 'Bridge ok') : t(locale, 'Bridge offline', 'Bridge offline')}
+            </div>
           </div>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          <div className="rounded-2xl border border-destructive/10 bg-destructive/5 p-4 text-sm leading-6 text-destructive">
-            {error}
-          </div>
-          <div className="grid gap-3 sm:grid-cols-2">
-            <DetailRow label="Bridge status" value={bridgeHealth?.ok ? 'Online' : 'Offline'} />
-            <DetailRow label="Captured at" value={formatDateTime(bridgeHealth?.capturedAt || null)} />
-          </div>
-          <div className="flex flex-wrap gap-3">
-            <Button onClick={onRetry}>
+
+          <div className="mt-4 flex gap-3">
+            <Button className="rounded-xl text-[13px]" onClick={onRetry}>
               <RefreshCcw className="h-4 w-4" />
-              Retry now
+              {t(locale, 'Try again', 'Tentar de novo')}
             </Button>
-            <Badge variant="warning">Reload the extension from dist/extension if this persists</Badge>
           </div>
-        </CardContent>
-      </Card>
+        </div>
+      </div>
     </div>
-  </div>
-);
+  );
+}

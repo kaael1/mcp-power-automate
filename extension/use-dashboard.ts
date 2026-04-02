@@ -2,7 +2,8 @@ import { startTransition, useEffect, useMemo, useState } from 'react';
 
 import type { HealthPayload } from '../server/bridge-types.js';
 import { deriveDashboardModel } from './dashboard-model.js';
-import { fetchBridgeHealthDirect, getDashboardPayload, sendRuntimeMessage } from './dashboard-client.js';
+import { fetchBridgeHealthDirect, getDashboardPayload, openSidePanelDirect, sendRuntimeMessage } from './dashboard-client.js';
+import type { Locale } from './i18n.js';
 import type { DashboardPayload, RuntimeMessage } from './types.js';
 
 type DashboardMessageAction =
@@ -24,7 +25,7 @@ export type DashboardPhase =
   | { kind: 'ready'; payload: DashboardPayload }
   | { bridgeHealth: HealthPayload | null; error: string; kind: 'background-error' };
 
-export const useDashboard = () => {
+export const useDashboard = (locale: Locale) => {
   const [phase, setPhase] = useState<DashboardPhase>({ kind: 'loading' });
   const [pendingAction, setPendingAction] = useState<string | null>(null);
 
@@ -59,7 +60,17 @@ export const useDashboard = () => {
 
     try {
       if (action.type === 'open-side-panel') {
-        await sendRuntimeMessage<{ ok: true }>(action as RuntimeMessage);
+        try {
+          await openSidePanelDirect();
+        } catch {
+          await sendRuntimeMessage<{ ok: true }>(action as RuntimeMessage);
+        }
+
+        if (document.body.dataset.surface === 'popup') {
+          window.close();
+          return;
+        }
+
         const payload = await getDashboardPayload();
         startTransition(() => {
           setPhase({ kind: 'ready', payload });
@@ -86,11 +97,11 @@ export const useDashboard = () => {
 
   const model = useMemo(() => {
     if (phase.kind === 'ready') {
-      return deriveDashboardModel(phase.payload);
+      return deriveDashboardModel(phase.payload, locale);
     }
 
     return null;
-  }, [phase]);
+  }, [locale, phase]);
 
   return {
     model,

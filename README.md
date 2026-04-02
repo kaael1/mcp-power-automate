@@ -171,12 +171,13 @@ bun run check
 
 The popup and side panel help you:
 
-- compare the selected target flow with the current tab flow
-- switch the selected target to the current tab
+- use the popup as a quick launcher for the selected target, the top alert, and the safest next action
+- use the side panel as the main workspace with `Today`, `Flows`, `Review`, and `System` sections
+- review the current browser flow and keep the assistant synced with it
 - refresh run status
-- review the last update summary
+- review the last update with a structured visual diff
 - revert the last saved change
-- browse pinned, recent, and current-environment flows from a daily cockpit view
+- browse pinned, recent, and current-environment flows without leaving the workspace
 
 `list_flows` returns an `accessScope` hint per flow:
 
@@ -228,7 +229,7 @@ This MCP is not a remote cloud service.
 
 - The browser still provides auth and current-tab context
 - Rollback is currently one step only
-- The extension focuses on operational context and safe actions, not a full diff editor
+- The review UI is optimized for confidence and inspection, not in-place diff editing
 - The current architecture is local-first, not remote SaaS-style
 - Critical production use is still best done with supervision
 

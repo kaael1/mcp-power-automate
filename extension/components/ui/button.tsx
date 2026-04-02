@@ -5,7 +5,7 @@ import { cva, type VariantProps } from 'class-variance-authority';
 import { cn } from '../../lib/utils.js';
 
 const buttonVariants = cva(
-  'inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-2xl text-sm font-semibold transition-all duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50 ring-offset-background',
+  'inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-xl text-sm font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50 ring-offset-background',
   {
     defaultVariants: {
       size: 'default',
@@ -13,15 +13,15 @@ const buttonVariants = cva(
     },
     variants: {
       size: {
-        default: 'h-11 px-4 py-2',
-        icon: 'h-11 w-11',
-        sm: 'h-9 rounded-xl px-3',
+        default: 'h-10 px-4 py-2',
+        icon: 'h-10 w-10',
+        sm: 'h-8 rounded-lg px-3 text-[13px]',
       },
       variant: {
-        default: 'bg-primary text-primary-foreground shadow-lg shadow-primary/20 hover:-translate-y-0.5 hover:bg-primary/95',
+        default: 'bg-foreground text-background hover:bg-foreground/92',
         ghost: 'bg-transparent text-foreground hover:bg-muted/70',
-        outline: 'border bg-white/70 text-foreground hover:bg-white',
-        secondary: 'bg-secondary text-secondary-foreground hover:-translate-y-0.5 hover:bg-secondary/85',
+        outline: 'border border-border bg-white text-foreground hover:bg-secondary/45',
+        secondary: 'bg-secondary text-secondary-foreground hover:bg-secondary/85',
       },
     },
   },

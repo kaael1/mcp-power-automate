@@ -9,6 +9,8 @@ declare global {
 
 let extensionContextAlive = true;
 let refreshTimer: number | null = null;
+let locationWatchTimer: number | null = null;
+let lastObservedUrl = window.location.href;
 
 const isContextInvalidatedError = (error: unknown) =>
   error instanceof Error && /Extension context invalidated/i.test(error.message);
@@ -19,9 +21,16 @@ const cleanupRuntimeHooks = () => {
     refreshTimer = null;
   }
 
+  if (locationWatchTimer !== null) {
+    window.clearInterval(locationWatchTimer);
+    locationWatchTimer = null;
+  }
+
   window.removeEventListener('focus', handleFocus);
   window.removeEventListener('storage', handleStorage);
   window.removeEventListener('message', handleMessage);
+  window.removeEventListener('popstate', handleLocationChange);
+  window.removeEventListener('hashchange', handleLocationChange);
   window.removeEventListener('beforeunload', cleanupRuntimeHooks);
 };
 
@@ -227,11 +236,20 @@ const handleStorage = () => {
   injectProbe();
 };
 
+const handleLocationChange = () => {
+  if (window.location.href === lastObservedUrl) return;
+  lastObservedUrl = window.location.href;
+  void reportBestToken();
+  injectProbe();
+};
+
 window.__paMcpBridgeTeardown?.();
 window.__paMcpBridgeTeardown = cleanupRuntimeHooks;
 
 window.addEventListener('message', handleMessage);
 window.addEventListener('beforeunload', cleanupRuntimeHooks, { once: true });
+window.addEventListener('popstate', handleLocationChange);
+window.addEventListener('hashchange', handleLocationChange);
 
 void reportBestToken();
 injectProbe();
@@ -241,3 +259,4 @@ refreshTimer = window.setInterval(() => {
   void reportBestToken();
   injectProbe();
 }, 5000);
+locationWatchTimer = window.setInterval(handleLocationChange, 1000);

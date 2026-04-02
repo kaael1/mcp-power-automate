@@ -89,7 +89,7 @@ describe('dashboard model', () => {
   it('derives a healthy aligned state', () => {
     const model = deriveDashboardModel(basePayload);
 
-    expect(model.statusLabel).toBe('Ready');
+    expect(model.statusLabel).toBe('Connected');
     expect(model.selectedTargetMismatch).toBe(false);
     expect(model.attentionItems[0]?.severity).toBe('success');
     expect(model.pinnedFlows.map((flow) => flow.flowId)).toEqual(['flow-b']);
@@ -118,10 +118,10 @@ describe('dashboard model', () => {
         lastRun: {
           capturedAt: '2026-04-01T10:03:00.000Z',
           envId: 'Default-123',
-          flowId: 'flow-a',
+          flowId: 'flow-b',
           run: {
             failedActionName: 'Compose Customer',
-            flowId: 'flow-a',
+            flowId: 'flow-b',
             runId: 'run-2',
             status: 'Failed',
           },
@@ -129,10 +129,145 @@ describe('dashboard model', () => {
       },
     });
 
-    expect(model.statusLabel).toBe('Target mismatch');
+    expect(model.statusLabel).toBe('Sync available');
     expect(model.selectedTargetMismatch).toBe(true);
     expect(model.attentionItems.some((item) => item.id === 'target-mismatch')).toBe(true);
     expect(model.attentionItems.some((item) => item.id === 'last-run-failed')).toBe(true);
+  });
+
+  it('uses the current tab flow for last update review when it differs from the internal target', () => {
+    const model = deriveDashboardModel({
+      ...basePayload,
+      status: {
+        ...basePayload.status,
+        activeFlow: {
+          activeTarget: {
+            displayName: 'Flow A',
+            envId: 'Default-123',
+            flowId: 'flow-a',
+            selectedAt: '2026-04-01T10:01:00.000Z',
+            selectionSource: 'manual',
+          },
+          currentTab: {
+            displayName: 'Flow B',
+            envId: 'Default-123',
+            flowId: 'flow-b',
+          },
+        },
+        lastUpdate: {
+          after: {
+            displayName: 'Flow B',
+            envId: 'Default-123',
+            flow: {
+              $schema: 'schema',
+              connectionReferences: {},
+              definition: { actions: {}, triggers: {} },
+            },
+            flowId: 'flow-b',
+          },
+          before: {
+            displayName: 'Flow B',
+            envId: 'Default-123',
+            flow: {
+              $schema: 'schema',
+              connectionReferences: {},
+              definition: { actions: {}, triggers: {} },
+            },
+            flowId: 'flow-b',
+          },
+          capturedAt: '2026-04-01T10:05:00.000Z',
+          envId: 'Default-123',
+          flowId: 'flow-b',
+          review: {
+            changedPaths: ['displayName'],
+            sections: [
+              {
+                id: 'metadata',
+                items: [
+                  {
+                    afterValue: 'Flow B',
+                    beforeValue: 'Flow B old',
+                    changeType: 'modified',
+                    detailPath: null,
+                    entityName: null,
+                    id: 'metadata:displayName:modified',
+                    label: 'Flow name',
+                    path: 'displayName',
+                    sectionId: 'metadata',
+                  },
+                ],
+              },
+            ],
+            summary: {
+              changedSectionIds: ['metadata'],
+              totalChanges: 1,
+              unchangedSectionIds: ['triggers', 'actions', 'connections', 'other'],
+            },
+          },
+          summary: {
+            afterActionCount: 0,
+            afterDisplayName: 'Flow B',
+            afterTriggerCount: 0,
+            beforeActionCount: 0,
+            beforeDisplayName: 'Flow B old',
+            beforeTriggerCount: 0,
+            changedActionNames: [],
+            changedDefinition: false,
+            changedDisplayName: true,
+            changedFlowBody: false,
+          },
+        },
+      },
+    });
+
+    expect(model.lastUpdate?.flowId).toBe('flow-b');
+  });
+
+  it('normalizes a legacy cached last update that is missing review details', () => {
+    const model = deriveDashboardModel({
+      ...basePayload,
+      status: {
+        ...basePayload.status,
+        lastUpdate: {
+          after: {
+            displayName: 'Flow A renamed',
+            envId: 'Default-123',
+            flow: {
+              $schema: 'schema',
+              connectionReferences: {},
+              definition: {
+                actions: {
+                  ComposeCustomer: {
+                    inputs: 'hello',
+                    type: 'Compose',
+                  },
+                },
+                triggers: {},
+              },
+            },
+            flowId: 'flow-a',
+          },
+          before: {
+            displayName: 'Flow A',
+            envId: 'Default-123',
+            flow: {
+              $schema: 'schema',
+              connectionReferences: {},
+              definition: { actions: {}, triggers: {} },
+            },
+            flowId: 'flow-a',
+          },
+          capturedAt: '2026-04-01T10:05:00.000Z',
+          envId: 'Default-123',
+          flowId: 'flow-a',
+        } as unknown as DashboardPayload['status']['lastUpdate'],
+      },
+    });
+
+    expect(model.lastUpdate?.summary.changedDisplayName).toBe(true);
+    expect(model.lastUpdate?.summary.changedFlowBody).toBe(true);
+    expect(model.lastUpdate?.review.summary.totalChanges).toBeGreaterThan(0);
+    expect(model.lastUpdate?.review.sections.length).toBeGreaterThan(0);
   });
 
   it('warns when the legacy token is not ready', () => {
@@ -153,7 +288,43 @@ describe('dashboard model', () => {
     });
 
     expect(model.hasLegacyApi).toBe(false);
-    expect(model.statusLabel).toBe('Session needs refresh');
+    expect(model.statusLabel).toBe('Setup needed');
     expect(model.attentionItems.some((item) => item.id === 'legacy-missing')).toBe(true);
+  });
+
+  it('treats a legacy-compatible token audit as ready for deeper actions', () => {
+    const model = deriveDashboardModel({
+      ...basePayload,
+      status: {
+        ...basePayload.status,
+        bridge: {
+          ...basePayload.status.bridge,
+          hasLegacyApi: false,
+        },
+        session: {
+          ...basePayload.status.session!,
+          legacyApiUrl: undefined,
+          legacyToken: undefined,
+        },
+        tokenAudit: {
+          candidates: [
+            {
+              aud: 'https://service.flow.microsoft.com/',
+              score: 0,
+              source: 'browser-storage',
+              token: 'Bearer legacy-from-audit',
+            },
+          ],
+          capturedAt: '2026-04-01T10:04:00.000Z',
+          envId: 'Default-123',
+          flowId: 'flow-a',
+          source: 'browser-storage',
+        },
+      },
+    });
+
+    expect(model.hasLegacyApi).toBe(true);
+    expect(model.statusLabel).toBe('Connected');
+    expect(model.attentionItems.some((item) => item.id === 'legacy-missing')).toBe(false);
   });
 });

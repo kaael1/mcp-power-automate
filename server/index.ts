@@ -65,6 +65,18 @@ const readJsonBody = async (request: IncomingMessage) =>
     });
   });
 
+const hasLegacyTokenAuditCandidate = () => {
+  const tokenAudit = getTokenAudit();
+
+  return Boolean(
+    tokenAudit?.candidates?.some(
+      (candidate) =>
+        candidate.aud === 'https://service.flow.microsoft.com/' ||
+        candidate.aud === 'https://service.powerapps.com/',
+    ),
+  );
+};
+
 export const createHealthPayload = (): HealthPayload => {
   const session = getSession();
   const lastRun = getLastRun();
@@ -79,7 +91,7 @@ export const createHealthPayload = (): HealthPayload => {
     bridgeMode: ownsBridgeServer ? 'owned' : 'reused',
     currentTabFlowId: session?.flowId || null,
     envId: session?.envId || activeTarget?.envId || null,
-    hasLegacyApi: Boolean(session?.legacyApiUrl && session?.legacyToken),
+    hasLegacyApi: Boolean(session?.legacyApiUrl && session?.legacyToken) || hasLegacyTokenAuditCandidate(),
     hasLastUpdate: Boolean(lastUpdate),
     hasLastRun: Boolean(lastRun?.run),
     hasSnapshot: Boolean(snapshot),

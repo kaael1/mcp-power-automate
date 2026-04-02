@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "Power Automate MCP Bridge",
   "description": "Captures the current Power Automate browser session and sends it to a local MCP bridge.",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "permissions": ["storage", "tabs", "webRequest", "sidePanel"],
   "host_permissions": [
     "*://*.flow.microsoft.com/*",

@@ -1,5 +1,7 @@
+import { createFlowReview } from '../server/client-helpers.js';
 import type { PopupStatusPayload } from '../server/bridge-types.js';
 import type { FlowCatalogItem, LastUpdate, RunSummary } from '../server/schemas.js';
+import { t, type Locale } from './i18n.js';
 import type { DashboardPayload } from './types.js';
 
 export type AttentionSeverity = 'critical' | 'info' | 'success' | 'warning';
@@ -54,6 +56,81 @@ export interface DashboardFlowReference {
 
 const formatFallbackName = (flowId: string) => `Flow ${flowId.slice(0, 8)}`;
 
+const isPlainObject = (value: unknown): value is Record<string, unknown> =>
+  Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+
+const getObjectKeys = (value: unknown) => (isPlainObject(value) ? Object.keys(value) : []);
+
+const buildFallbackUpdateSummary = (lastUpdate: Pick<LastUpdate, 'after' | 'before'>): LastUpdate['summary'] => {
+  const beforeActions = getObjectKeys(lastUpdate.before.flow.definition?.actions);
+  const afterActions = getObjectKeys(lastUpdate.after.flow.definition?.actions);
+  const beforeTriggers = getObjectKeys(lastUpdate.before.flow.definition?.triggers);
+  const afterTriggers = getObjectKeys(lastUpdate.after.flow.definition?.triggers);
+  const changedDefinition =
+    JSON.stringify(lastUpdate.before.flow.definition) !== JSON.stringify(lastUpdate.after.flow.definition) ||
+    JSON.stringify(lastUpdate.before.flow.connectionReferences) !== JSON.stringify(lastUpdate.after.flow.connectionReferences);
+
+  return {
+    afterActionCount: afterActions.length,
+    afterDisplayName: lastUpdate.after.displayName ?? '',
+    afterTriggerCount: afterTriggers.length,
+    beforeActionCount: beforeActions.length,
+    beforeDisplayName: lastUpdate.before.displayName ?? '',
+    beforeTriggerCount: beforeTriggers.length,
+    changedActionNames: [...new Set([...beforeActions, ...afterActions])].filter(
+      (name) => !beforeActions.includes(name) || !afterActions.includes(name),
+    ),
+    changedDefinition,
+    changedDisplayName: lastUpdate.before.displayName !== lastUpdate.after.displayName,
+    changedFlowBody: changedDefinition,
+  };
+};
+
+const normalizeLastUpdate = (lastUpdate: LastUpdate | null) => {
+  if (!lastUpdate) return null;
+
+  const fallbackReview = createFlowReview({
+    after: lastUpdate.after,
+    before: lastUpdate.before,
+  });
+  const fallbackSummary = buildFallbackUpdateSummary(lastUpdate);
+  const storedReview = isPlainObject(lastUpdate.review) ? lastUpdate.review : null;
+  const storedReviewSummary = isPlainObject(storedReview?.summary) ? storedReview.summary : null;
+  const storedSections = Array.isArray(storedReview?.sections) ? storedReview.sections : null;
+  const storedChangedPaths = Array.isArray(storedReview?.changedPaths) ? storedReview.changedPaths : null;
+  const storedSummary = isPlainObject(lastUpdate.summary) ? lastUpdate.summary : null;
+
+  return {
+    ...lastUpdate,
+    review: {
+      ...fallbackReview,
+      ...storedReview,
+      changedPaths: storedChangedPaths || fallbackReview.changedPaths,
+      sections: storedSections || fallbackReview.sections,
+      summary: {
+        ...fallbackReview.summary,
+        ...storedReviewSummary,
+        changedSectionIds:
+          Array.isArray(storedReviewSummary?.changedSectionIds) ?
+            storedReviewSummary.changedSectionIds
+          : fallbackReview.summary.changedSectionIds,
+        unchangedSectionIds:
+          Array.isArray(storedReviewSummary?.unchangedSectionIds) ?
+            storedReviewSummary.unchangedSectionIds
+          : fallbackReview.summary.unchangedSectionIds,
+      },
+    },
+    summary: {
+      ...fallbackSummary,
+      ...storedSummary,
+      changedActionNames:
+        Array.isArray(storedSummary?.changedActionNames) ?
+          storedSummary.changedActionNames
+        : fallbackSummary.changedActionNames,
+    },
+  } satisfies LastUpdate;
+};
+
 const toReference = ({
   fallback,
   flow,
@@ -85,23 +162,32 @@ const toReference = ({
   };
 };
 
-const getSelectedRun = (payload: PopupStatusPayload, activeTarget: DashboardFlowReference | null) => {
-  if (!payload.lastRun || !activeTarget?.flowId || !activeTarget.envId) return null;
+const getSelectedRun = (payload: PopupStatusPayload, flowRef: DashboardFlowReference | null) => {
+  if (!payload.lastRun || !flowRef?.flowId || !flowRef.envId) return null;
 
   const sameFlow =
-    payload.lastRun.flowId === activeTarget.flowId && payload.lastRun.envId === activeTarget.envId;
+    payload.lastRun.flowId === flowRef.flowId && payload.lastRun.envId === flowRef.envId;
 
   return sameFlow ? payload.lastRun.run || null : null;
 };
 
-const getSelectedUpdate = (payload: PopupStatusPayload, activeTarget: DashboardFlowReference | null) => {
-  if (!payload.lastUpdate || !activeTarget?.flowId || !activeTarget.envId) return null;
+const getSelectedUpdate = (payload: PopupStatusPayload, flowRef: DashboardFlowReference | null) => {
+  if (!payload.lastUpdate || !flowRef?.flowId || !flowRef.envId) return null;
 
   const sameFlow =
-    payload.lastUpdate.flowId === activeTarget.flowId && payload.lastUpdate.envId === activeTarget.envId;
+    payload.lastUpdate.flowId === flowRef.flowId && payload.lastUpdate.envId === flowRef.envId;
 
-  return sameFlow ? payload.lastUpdate : null;
+  return sameFlow ? normalizeLastUpdate(payload.lastUpdate) : null;
 };
+
+const hasLegacyTokenAuditCandidate = (payload: PopupStatusPayload) =>
+  Boolean(
+    payload.tokenAudit?.candidates?.some(
+      (candidate) =>
+        candidate.aud === 'https://service.flow.microsoft.com/' ||
+        candidate.aud === 'https://service.powerapps.com/',
+    ),
+  );
 
 const buildAttentionItems = ({
   activeTarget,
@@ -111,6 +197,7 @@ const buildAttentionItems = ({
   hasSession,
   lastRun,
   lastUpdate,
+  locale,
   selectedTargetMismatch,
 }: {
   activeTarget: DashboardFlowReference | null;
@@ -120,91 +207,120 @@ const buildAttentionItems = ({
   hasSession: boolean;
   lastRun: RunSummary | null;
   lastUpdate: LastUpdate | null;
+  locale: Locale;
   selectedTargetMismatch: boolean;
 }): DashboardAttentionItem[] => {
   const items: DashboardAttentionItem[] = [];
 
   if (error) {
     items.push({
-      actionLabel: 'Refresh capture',
+      actionLabel: t(locale, 'Refresh tab', 'Atualizar aba'),
       actionType: 'refresh-current-tab',
       description: error,
       id: 'bridge-error',
       severity: 'critical',
-      title: 'The extension has an actionable error right now.',
+      title: t(locale, 'Something needs your attention.', 'Algo precisa da sua atenção.'),
     });
   }
 
   if (!hasSession) {
     items.push({
-      actionLabel: 'Refresh capture',
+      actionLabel: t(locale, 'Refresh tab', 'Atualizar aba'),
       actionType: 'refresh-current-tab',
-      description: 'Open a flow page and refresh the tab so the browser session, token, and flow snapshot can be captured.',
+      description: t(
+        locale,
+        'Open any Power Automate flow and refresh the tab so the extension can capture page context safely.',
+        'Abra qualquer fluxo do Power Automate e atualize a aba para a extensão capturar o contexto da página com segurança.',
+      ),
       id: 'missing-session',
       severity: 'warning',
-      title: 'No active Power Automate session is captured.',
+      title: t(locale, 'Open a flow to get started.', 'Abra um fluxo para começar.'),
     });
   }
 
   if (selectedTargetMismatch && activeTarget && currentTab) {
     items.push({
-      actionLabel: 'Use current tab',
+      actionLabel: t(locale, 'Follow this flow', 'Seguir este fluxo'),
       actionType: 'set-active-flow-from-tab',
-      description: `${activeTarget.displayName} is selected, but the browser is showing ${currentTab.displayName}.`,
+      description: t(
+        locale,
+        `This browser tab is showing ${currentTab.displayName}. Sync the assistant if this is the flow you want to work on.`,
+        `Esta aba do navegador está mostrando ${currentTab.displayName}. Sincronize o assistente se este for o fluxo em que você quer trabalhar.`,
+      ),
       id: 'target-mismatch',
       severity: 'warning',
-      title: 'The MCP target is different from the current tab.',
+      title: t(locale, 'You opened a different flow.', 'Você abriu outro fluxo.'),
     });
   }
 
   if (hasSession && !hasLegacyApi) {
     items.push({
-      actionLabel: 'Refresh capture',
+      actionLabel: t(locale, 'Refresh tab', 'Atualizar aba'),
       actionType: 'refresh-current-tab',
-      description: 'The session is live, but legacy-compatible operations like validation may need a fresh token capture.',
+      description: t(
+        locale,
+        'The page is connected, but validation and some save operations still need a fresh secure token capture.',
+        'A página está conectada, mas validação e algumas operações de salvar ainda precisam de uma nova captura segura de token.',
+      ),
       id: 'legacy-missing',
       severity: 'warning',
-      title: 'Validation and some flow operations are not fully ready yet.',
+      title: t(locale, 'Almost ready for deeper actions.', 'Quase pronto para ações mais avançadas.'),
     });
   }
 
   if ((lastRun?.status || '').toLowerCase() === 'failed' && lastRun) {
     items.push({
-      actionLabel: 'Refresh run',
+      actionLabel: t(locale, 'Check latest run', 'Ver última execução'),
       actionType: 'refresh-last-run',
       description: lastRun.failedActionName
-        ? `The latest run failed at ${lastRun.failedActionName}.`
-        : 'The latest run failed and needs investigation.',
+        ? t(
+            locale,
+            `The latest run failed at ${lastRun.failedActionName}.`,
+            `A última execução falhou em ${lastRun.failedActionName}.`,
+          )
+        : t(
+            locale,
+            'The latest run failed and needs a closer look.',
+            'A última execução falhou e precisa de uma olhada mais cuidadosa.',
+          ),
       id: 'last-run-failed',
       severity: 'critical',
-      title: 'The latest run for the selected flow failed.',
+      title: t(locale, 'The latest run needs review.', 'A última execução precisa de revisão.'),
     });
   }
 
   if (lastUpdate?.summary?.changedFlowBody) {
     items.push({
-      actionLabel: 'Open side panel',
+      actionLabel: t(locale, 'Open workspace', 'Abrir espaço de trabalho'),
       actionType: 'open-side-panel',
-      description: 'A logic-changing update exists for this flow. Review it before making another edit.',
+      description: t(
+        locale,
+        'This flow has a cached logic change. Review it before making another edit.',
+        'Este fluxo tem uma mudança lógica em cache. Revise antes de fazer outra edição.',
+      ),
       id: 'logic-updated',
       severity: 'info',
-      title: 'The selected flow has a cached logic change.',
+      title: t(locale, 'A recent change is ready to review.', 'Uma mudança recente está pronta para revisão.'),
     });
   }
 
   if (items.length === 0) {
     items.push({
-      description: 'Target, session, and browser tab are aligned. The extension is ready for day-to-day inspection and safe actions.',
+      description: t(
+        locale,
+        'The current browser flow and the session are aligned. You can keep working with confidence.',
+        'O fluxo atual no navegador e a sessão estão alinhados. Você pode continuar com confiança.',
+      ),
       id: 'all-good',
       severity: 'success',
-      title: 'Everything looks healthy for the selected flow.',
+      title: t(locale, 'This flow is ready.', 'Este fluxo está pronto.'),
     });
   }
 
   return items;
 };
 
-export const deriveDashboardModel = (payload: DashboardPayload): DashboardModel => {
+export const deriveDashboardModel = (payload: DashboardPayload, locale: Locale = 'en'): DashboardModel => {
   const status = payload.status;
   const flowCatalog = payload.flowCatalog;
   const catalogFlows = flowCatalog?.flows || [];
@@ -251,8 +367,9 @@ export const deriveDashboardModel = (payload: DashboardPayload): DashboardModel 
     flow: currentTabItem,
   });
 
-  const lastRun = getSelectedRun(status, activeTarget);
-  const lastUpdate = getSelectedUpdate(status, activeTarget);
+  const primaryFlow = currentTab || activeTarget;
+  const lastRun = getSelectedRun(status, primaryFlow);
+  const lastUpdate = getSelectedUpdate(status, primaryFlow);
   const selectedTargetMismatch =
     Boolean(activeTarget?.flowId && currentTab?.flowId && activeTarget.flowId !== currentTab.flowId);
   const bridgeOnline = Boolean(status.bridge?.ok);
@@ -262,32 +379,53 @@ export const deriveDashboardModel = (payload: DashboardPayload): DashboardModel 
     Boolean(activeTarget?.flowId);
   const hasLegacyApi =
     Boolean(status.session?.legacyApiUrl && status.session?.legacyToken) ||
+    hasLegacyTokenAuditCandidate(status) ||
     Boolean((status.bridge as { hasLegacyApi?: boolean } | null)?.hasLegacyApi);
   const error = status.error || status.lastError || null;
 
   const statusLabel = !bridgeOnline
-    ? 'Bridge offline'
+    ? t(locale, 'Offline', 'Offline')
     : !hasSession
-      ? 'Awaiting session'
+      ? t(locale, 'Open a flow', 'Abra um fluxo')
       : selectedTargetMismatch
-        ? 'Target mismatch'
+        ? t(locale, 'Sync available', 'Sincronização disponível')
         : (lastRun?.status || '').toLowerCase() === 'failed'
-          ? 'Run failed'
+          ? t(locale, 'Run needs review', 'Execução precisa de revisão')
           : !hasLegacyApi
-            ? 'Session needs refresh'
-            : 'Ready';
+            ? t(locale, 'Setup needed', 'Configuração pendente')
+            : t(locale, 'Connected', 'Conectado');
 
   const statusMessage = !bridgeOnline
-    ? 'The popup cannot reach the local bridge.'
+    ? t(locale, 'The extension cannot reach the local bridge right now.', 'A extensão não consegue alcançar a bridge local agora.')
     : !hasSession
-      ? 'Open a flow page and refresh the browser tab to capture context.'
+      ? t(
+          locale,
+          'Open a Power Automate flow and refresh the page so we can capture the right context.',
+          'Abra um fluxo do Power Automate e atualize a página para capturarmos o contexto certo.',
+        )
       : selectedTargetMismatch
-        ? 'You are looking at one flow while the MCP target points to another.'
+        ? t(
+            locale,
+            'The browser moved to a different flow. Sync this page if you want the assistant to follow it.',
+            'O navegador mudou para outro fluxo. Sincronize esta página se quiser que o assistente siga esse fluxo.',
+          )
         : (lastRun?.status || '').toLowerCase() === 'failed'
-          ? 'The latest run failed, so this flow likely needs attention before more edits.'
+          ? t(
+              locale,
+              'The latest run failed, so it is safer to review the flow before making more changes.',
+              'A última execução falhou, então é mais seguro revisar o fluxo antes de fazer novas mudanças.',
+            )
           : !hasLegacyApi
-            ? 'The flow is visible, but validation-grade operations need a fresh legacy-compatible token.'
-            : 'The extension is ready for inspection, targeting, validation, and safe follow-up actions.';
+            ? t(
+                locale,
+                'The flow is visible, but deeper actions still need a fresh compatibility token capture.',
+                'O fluxo está visível, mas ações mais profundas ainda precisam de uma nova captura de token de compatibilidade.',
+              )
+            : t(
+                locale,
+                'Everything is aligned for safe inspection, review, and follow-up actions.',
+                'Tudo está alinhado para inspeção, revisão e próximos passos com segurança.',
+              );
 
   const mapIdsToFlows = (ids: string[]) =>
     ids
@@ -312,6 +450,7 @@ export const deriveDashboardModel = (payload: DashboardPayload): DashboardModel 
       hasSession,
       lastRun,
       lastUpdate,
+      locale,
       selectedTargetMismatch,
     }),
     bridgeMode: status.bridge?.bridgeMode || null,

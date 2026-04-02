@@ -44,16 +44,16 @@ body {
 
 body {
   background-image:
-    radial-gradient(circle at top left, rgba(15, 98, 254, 0.12), transparent 30%),
-    radial-gradient(circle at top right, rgba(23, 190, 187, 0.08), transparent 24%),
-    linear-gradient(180deg, #f7faff 0%, #eef3fb 48%, #e8eef8 100%);
+    radial-gradient(circle at top left, rgba(15, 98, 254, 0.05), transparent 28%),
+    linear-gradient(180deg, #f7f9fc 0%, #eef3f9 100%);
 }
 
 body[data-surface='popup'] {
-  min-width: 560px;
-  width: 560px;
-  min-height: 820px;
-  height: 820px;
+  min-width: 432px;
+  width: 432px;
+  max-width: 432px;
+  min-height: 0;
+  max-height: 640px;
   overflow-y: auto;
 }
 
@@ -69,11 +69,11 @@ body[data-surface='sidepanel'] {
 
 @layer components {
   .glass-panel {
-    @apply rounded-[28px] border border-white/70 bg-white/90 shadow-soft backdrop-blur-xl;
+    @apply rounded-[18px] border border-slate-200 bg-white shadow-sm;
   }
 
   .surface-panel {
-    @apply rounded-[24px] border bg-white/95 shadow-surface backdrop-blur-md;
+    @apply rounded-[16px] border border-slate-200 bg-white shadow-sm;
   }
 
   .kicker {

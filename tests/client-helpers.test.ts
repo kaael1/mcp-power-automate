@@ -104,6 +104,15 @@ describe('client helpers', () => {
     expect(result.summary.changedFlowBody).toBe(true);
     expect(result.summary.changedActionNames).toContain('Compose');
     expect(result.summary.changedActionNames).toContain('Compose2');
+    expect(result.review.summary.totalChanges).toBeGreaterThanOrEqual(3);
+    expect(result.review.summary.changedSectionIds).toContain('metadata');
+    expect(result.review.summary.changedSectionIds).toContain('actions');
+    expect(result.review.summary.changedSectionIds).toContain('connections');
+    expect(result.review.summary.unchangedSectionIds).toContain('triggers');
+    expect(result.review.changedPaths).toContain('displayName');
+    expect(result.review.changedPaths).toContain('flow.connectionReferences.shared');
+    expect(result.review.changedPaths).toContain('flow.definition.actions.Compose');
+    expect(result.review.changedPaths).toContain('flow.definition.actions.Compose2');
 
     vi.useRealTimers();
   });

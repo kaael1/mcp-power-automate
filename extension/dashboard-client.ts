@@ -38,3 +38,18 @@ export const fetchBridgeHealthDirect = async () => {
 };
 
 export const getDashboardPayload = () => sendRuntimeMessage<DashboardPayload>({ type: 'get-dashboard' });
+
+export const openSidePanelDirect = async () => {
+  if (!chrome.sidePanel?.open) {
+    throw new Error('This browser does not support the extension side panel API.');
+  }
+
+  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+  const windowId = tab?.windowId ?? chrome.windows.WINDOW_ID_CURRENT;
+
+  await chrome.sidePanel.setOptions({
+    enabled: true,
+    path: 'sidepanel.html',
+  });
+  await chrome.sidePanel.open({ windowId });
+};

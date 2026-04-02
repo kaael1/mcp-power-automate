@@ -1,6 +1,7 @@
 node_modules/
 dist/
 .run/
+.tmp_uiux_files/
 data/*.json
 !data/.gitkeep
 FLOW_REVIEW.md

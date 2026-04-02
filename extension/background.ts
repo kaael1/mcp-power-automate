@@ -27,6 +27,28 @@ const getTabState = (tabId: number) => {
   return state.tabs[tabId] as BackgroundTabState;
 };
 
+const syncCapturedTabContext = async (
+  tabId: number,
+  context: {
+    envId?: string | null;
+    flowId?: string | null;
+    portalUrl?: string | null;
+  },
+) => {
+  const tabState = getTabState(tabId);
+
+  if (context.envId) tabState.envId = context.envId;
+  if (context.flowId) tabState.flowId = context.flowId;
+  if (context.portalUrl) tabState.portalUrl = context.portalUrl;
+
+  if (tabState.apiUrl && tabState.apiToken && tabState.envId && tabState.flowId) {
+    const session = buildSessionFromTabState(tabState);
+    if (session) {
+      await maybeSendSession(session);
+    }
+  }
+};
+
 const getStorage = <T extends StorageShape = StorageShape>(keys: string[]) =>
   new Promise<T>((resolve) => {
     chrome.storage.local.get(keys, (result) => resolve(result as T));
@@ -596,6 +618,14 @@ chrome.runtime.onMessage.addListener((message: RuntimeMessage, sender, sendRespo
   if (message?.type === 'flow-snapshot') {
     postSnapshotToBridge(message.payload)
       .then(async (result) => {
+        const targetTabId = sender?.tab?.id;
+        if (typeof targetTabId === 'number') {
+          await syncCapturedTabContext(targetTabId, {
+            envId: message.payload.envId,
+            flowId: message.payload.flowId,
+            portalUrl: sender?.tab?.url || null,
+          });
+        }
         await setStorage({
           [STORAGE_KEYS.lastSnapshot]: message.payload,
         });
@@ -608,6 +638,14 @@ chrome.runtime.onMessage.addListener((message: RuntimeMessage, sender, sendRespo
   if (message?.type === 'token-audit') {
     postTokenAuditToBridge(message.payload)
       .then(async () => {
+        const targetTabId = sender?.tab?.id;
+        if (typeof targetTabId === 'number') {
+          await syncCapturedTabContext(targetTabId, {
+            envId: message.payload.envId,
+            flowId: message.payload.flowId,
+            portalUrl: message.payload.portalUrl || sender?.tab?.url || null,
+          });
+        }
         await setStorage({
           [STORAGE_KEYS.tokenAudit]: message.payload,
         });
@@ -622,6 +660,11 @@ chrome.runtime.onMessage.addListener((message: RuntimeMessage, sender, sendRespo
 
     if (typeof targetTabId === 'number') {
       const tabState = getTabState(targetTabId);
+      const portalData = extractFromPortalUrl(sender?.tab?.url || '');
+      if (portalData?.envId) tabState.envId = portalData.envId;
+      if (portalData?.flowId) tabState.flowId = portalData.flowId;
+      if (sender?.tab?.url) tabState.portalUrl = sender.tab.url;
+
       void maybePromoteApiToken(tabState, message.token, message.source || 'msal-silent').then(() => {
         if (tabState.apiUrl && tabState.envId && tabState.flowId) {
           const session = buildSessionFromTabState(tabState);

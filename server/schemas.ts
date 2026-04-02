@@ -121,12 +121,45 @@ export const updateSummarySchema = z.object({
   changedFlowBody: z.boolean().optional(),
 });
 
+export const reviewSectionIdSchema = z.enum(['metadata', 'triggers', 'actions', 'connections', 'other']);
+export const reviewChangeTypeSchema = z.enum(['added', 'modified', 'removed']);
+
+export const flowReviewItemSchema = z.object({
+  afterValue: z.unknown().optional(),
+  beforeValue: z.unknown().optional(),
+  changeType: reviewChangeTypeSchema,
+  detailPath: z.string().nullable().optional(),
+  entityName: z.string().nullable().optional(),
+  id: z.string().trim().min(1, 'id is required'),
+  label: z.string().trim().min(1, 'label is required'),
+  path: z.string().trim().min(1, 'path is required'),
+  sectionId: reviewSectionIdSchema,
+});
+
+export const flowReviewSectionSchema = z.object({
+  id: reviewSectionIdSchema,
+  items: z.array(flowReviewItemSchema),
+});
+
+export const flowReviewSummarySchema = z.object({
+  changedSectionIds: z.array(reviewSectionIdSchema),
+  totalChanges: z.number().int().nonnegative(),
+  unchangedSectionIds: z.array(reviewSectionIdSchema),
+});
+
+export const flowReviewSchema = z.object({
+  changedPaths: z.array(z.string()),
+  sections: z.array(flowReviewSectionSchema),
+  summary: flowReviewSummarySchema,
+});
+
 export const lastUpdateSchema = z.object({
   after: normalizedFlowSchema,
   before: normalizedFlowSchema,
   capturedAt: z.string().trim().min(1, 'capturedAt is required'),
   envId: envIdSchema,
   flowId: flowIdSchema,
+  review: flowReviewSchema,
   summary: updateSummarySchema,
 });
 
@@ -206,6 +239,12 @@ export type TokenCandidate = z.infer<typeof tokenCandidateSchema>;
 export type TokenAudit = z.infer<typeof tokenAuditSchema>;
 export type NormalizedFlow = z.infer<typeof normalizedFlowSchema>;
 export type UpdateSummary = z.infer<typeof updateSummarySchema>;
+export type ReviewSectionId = z.infer<typeof reviewSectionIdSchema>;
+export type ReviewChangeType = z.infer<typeof reviewChangeTypeSchema>;
+export type FlowReviewItem = z.infer<typeof flowReviewItemSchema>;
+export type FlowReviewSection = z.infer<typeof flowReviewSectionSchema>;
+export type FlowReviewSummary = z.infer<typeof flowReviewSummarySchema>;
+export type FlowReview = z.infer<typeof flowReviewSchema>;
 export type LastUpdate = z.infer<typeof lastUpdateSchema>;
 export type RunSummary = z.infer<typeof runSummarySchema>;
 export type LastRun = z.infer<typeof lastRunSchema>;

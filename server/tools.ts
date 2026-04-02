@@ -71,7 +71,7 @@ const createJsonResource = (uri: string, payload: unknown) => ({
 export const createMcpApp = () => {
   const server = new McpServer({
     name: 'power-automate-local',
-    version: '0.2.0',
+    version: '0.4.0',
   });
 
   server.registerResource(
@@ -381,7 +381,8 @@ export const createMcpApp = () => {
   server.registerTool(
     'get_last_update',
     {
-      description: 'Return the last successful flow update recorded by the local bridge, including before/after summaries.',
+      description:
+        'Return the last successful flow update recorded by the local bridge, including before/after data, summaries, and a structured review diff.',
     },
     async () => {
       try {

@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.4.0
+
+- Refined the extension UI around a compact popup quick launcher and a clearer side-panel workspace with `Today`, `Flows`, `Review`, and `System`.
+- Moved the full saved-change diff into a dedicated review workspace and hid low-level diagnostics behind the system area by default.
+- Added locale-aware workspace controls plus render-focused tests for popup, review, system, and recovery states.
+- Tightened the button, input, card, and status styling toward a cleaner utilitarian visual language.
+- Updated the README and bundled skill guidance to match the new workspace structure and troubleshooting flow.
+
 ## 0.3.0
 
 - Migrated the MCP server and Chromium extension source from JavaScript modules to TypeScript.

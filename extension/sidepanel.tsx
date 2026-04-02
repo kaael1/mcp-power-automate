@@ -1,20 +1,38 @@
 import { createRoot } from 'react-dom/client';
 
 import { ErrorView, LoadingView, SidePanelDashboardView } from './components/dashboard-view.js';
+import { usePreferredLocale } from './use-locale.js';
 import { useDashboard } from './use-dashboard.js';
 
 const SidePanelApp = () => {
-  const { model, pendingAction, phase, refresh, runAction } = useDashboard();
+  const { locale, setLocale } = usePreferredLocale();
+  const { model, phase, refresh, runAction } = useDashboard(locale);
 
   if (phase.kind === 'loading' || !model) {
-    return <LoadingView surface="sidepanel" />;
+    return <LoadingView locale={locale} onLocaleChange={setLocale} surface="sidepanel" />;
   }
 
   if (phase.kind === 'background-error') {
-    return <ErrorView bridgeHealth={phase.bridgeHealth} error={phase.error} onRetry={() => void refresh()} surface="sidepanel" />;
+    return (
+      <ErrorView
+        bridgeHealth={phase.bridgeHealth}
+        error={phase.error}
+        locale={locale}
+        onLocaleChange={setLocale}
+        onRetry={() => void refresh()}
+        surface="sidepanel"
+      />
+    );
   }
 
-  return <SidePanelDashboardView model={model} onAction={(action) => void runAction(action)} pendingAction={pendingAction} />;
+  return (
+    <SidePanelDashboardView
+      locale={locale}
+      model={model}
+      onAction={(action) => void runAction(action)}
+      onLocaleChange={setLocale}
+    />
+  );
 };
 
 const rootElement = document.getElementById('app');

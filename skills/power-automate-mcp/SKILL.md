@@ -49,7 +49,7 @@ Important limitations:
 - The agent should explicitly choose a target with `list_flows` and `set_active_flow`.
 - The system depends on browser-backed session and token capture.
 - Rollback is currently only one step deep.
-- The popup shows a summary, not a full visual diff.
+- The extension now shows a structured post-save review diff, but it is still not an approval gate before save.
 - The best autonomous test path is a flow with a manual HTTP trigger.
 
 ## Recommended workflows
@@ -79,7 +79,7 @@ Steps:
 4. Call `validate_flow` on the candidate flow before save when possible.
 5. Call `update_flow`.
 6. Call `get_last_update`.
-7. Ask the user to refresh the tab, or instruct them to use the popup `Refresh tab` button.
+7. Ask the user to refresh the tab, or review the saved change in the extension `Review` workspace before continuing.
 8. If the change looks wrong, call `revert_last_update`.
 
 ### 3. Manual trigger test workflow
@@ -215,9 +215,9 @@ Before using it on critical flows, prefer adding:
 If the MCP looks installed but tools do not appear or the session behaves inconsistently:
 
 1. Check the local bridge health at `http://127.0.0.1:17373/health`.
-2. Confirm the browser extension popup shows the expected `Env ID` and `Flow ID`.
-3. Confirm the popup `Selected flow` is the one the agent is supposed to operate on.
-4. If needed, use `set_active_flow_from_tab` or the popup button to lock the current tab as the target.
+2. Confirm the browser extension shows the expected selected target flow and current browser flow.
+3. Open the side panel `System` section when you need environment, capture, token, or bridge details.
+4. If needed, use `set_active_flow_from_tab` or the extension quick action to lock the current tab as the target.
 5. Refresh the Power Automate tab after reloading the extension.
 6. If port `17373` is busy, prefer reusing the healthy bridge instead of starting another manual copy.
 7. If the bridge is unhealthy, stop the stale process and start a fresh session.
