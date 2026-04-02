@@ -1,70 +1,76 @@
-<svg width="1200" height="520" viewBox="0 0 1200 520" fill="none" xmlns="http://www.w3.org/2000/svg">
+<svg width="1200" height="620" viewBox="0 0 1200 620" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="title desc">
+  <title id="title">How MCP Power Automate works</title>
+  <desc id="desc">A readable architecture diagram showing the browser extension, local bridge and MCP server, and the MCP client with skill.</desc>
   <defs>
-    <linearGradient id="bg" x1="160" y1="40" x2="1040" y2="480" gradientUnits="userSpaceOnUse">
+    <linearGradient id="arch-bg" x1="110" y1="48" x2="1088" y2="584" gradientUnits="userSpaceOnUse">
       <stop stop-color="#F8FBFF"/>
-      <stop offset="1" stop-color="#EEF5FF"/>
+      <stop offset="1" stop-color="#EDF4FF"/>
     </linearGradient>
-    <linearGradient id="card" x1="0" y1="0" x2="1" y2="1">
+    <linearGradient id="arch-card" x1="0" y1="0" x2="1" y2="1">
       <stop stop-color="#FFFFFF"/>
-      <stop offset="1" stop-color="#F7FAFF"/>
+      <stop offset="1" stop-color="#F8FBFF"/>
     </linearGradient>
-    <filter id="shadow" x="0" y="0" width="1200" height="520" filterUnits="userSpaceOnUse" color-interpolation-filters="sRGB">
-      <feDropShadow dx="0" dy="18" stdDeviation="24" flood-color="#0F172A" flood-opacity="0.10"/>
+    <filter id="arch-shadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="18" stdDeviation="22" flood-color="#0F172A" flood-opacity="0.12"/>
     </filter>
     <style>
-      .title { font: 700 26px 'Segoe UI', Arial, sans-serif; fill: #0F172A; }
-      .subtitle { font: 400 15px 'Segoe UI', Arial, sans-serif; fill: #475569; }
-      .cardTitle { font: 700 20px 'Segoe UI', Arial, sans-serif; fill: #111827; }
-      .cardText { font: 400 14px 'Segoe UI', Arial, sans-serif; fill: #475569; }
-      .pill { font: 700 12px 'Segoe UI', Arial, sans-serif; fill: #0F3F73; }
-      .arrowLabel { font: 700 13px 'Segoe UI', Arial, sans-serif; fill: #1D4ED8; }
+      .title { font: 700 34px 'Segoe UI', Arial, sans-serif; fill: #0F172A; }
+      .subtitle { font: 400 18px 'Segoe UI', Arial, sans-serif; fill: #475569; }
+      .step { font: 700 12px 'Segoe UI', Arial, sans-serif; text-transform: uppercase; letter-spacing: 0.14em; fill: #0F4A7C; }
+      .card-title { font: 700 28px 'Segoe UI', Arial, sans-serif; fill: #111827; }
+      .card-copy { font: 400 16px 'Segoe UI', Arial, sans-serif; fill: #475569; }
+      .arrow-label { font: 700 13px 'Segoe UI', Arial, sans-serif; text-transform: uppercase; letter-spacing: 0.08em; fill: #2563EB; }
+      .callout { font: 700 15px 'Segoe UI', Arial, sans-serif; fill: #0C4A6E; }
     </style>
   </defs>
 
-  <rect x="30" y="30" width="1140" height="460" rx="28" fill="url(#bg)" stroke="#D9E6F7"/>
+  <rect x="36" y="34" width="1128" height="552" rx="30" fill="url(#arch-bg)" stroke="#D7E3F4"/>
 
-  <text x="80" y="105" class="title">How MCP Power Automate Works</text>
-  <text x="80" y="135" class="subtitle">Browser-backed auth, explicit flow targeting, and local MCP tools for safe Power Automate work.</text>
+  <text x="88" y="104" class="title">How MCP Power Automate Works</text>
+  <text x="88" y="138" class="subtitle">The browser provides trusted context and auth. The local bridge does the work. The MCP client stays in control.</text>
 
-  <g filter="url(#shadow)">
-    <rect x="80" y="180" width="300" height="220" rx="24" fill="url(#card)" stroke="#D8E1EF"/>
-    <rect x="112" y="212" width="96" height="32" rx="16" fill="#DBEAFE"/>
-    <text x="131" y="233" class="pill">Browser Side</text>
-    <text x="112" y="282" class="cardTitle">Chromium Extension</text>
-    <text x="112" y="316" class="cardText">Captures Power Automate session context,</text>
-    <text x="112" y="338" class="cardText">tab flow metadata, token audit, and browser snapshots.</text>
-    <text x="112" y="370" class="cardText">The browser is the auth source.</text>
+  <g filter="url(#arch-shadow)">
+    <rect x="88" y="200" width="286" height="248" rx="26" fill="url(#arch-card)" stroke="#D6E2F0"/>
   </g>
+  <rect x="120" y="232" width="112" height="34" rx="17" fill="#DBEAFE"/>
+  <text x="143" y="254" class="step">Step 1</text>
+  <text x="120" y="314" class="card-title">Browser Extension</text>
+  <text x="120" y="348" class="card-copy">Captures the Power Automate tab,</text>
+  <text x="120" y="372" class="card-copy">browser-backed auth, and session details.</text>
+  <text x="120" y="408" class="card-copy">This keeps the MCP grounded in the flow</text>
+  <text x="120" y="432" class="card-copy">the operator actually wants to work on.</text>
 
-  <g filter="url(#shadow)">
-    <rect x="450" y="160" width="300" height="260" rx="24" fill="url(#card)" stroke="#D8E1EF"/>
-    <rect x="482" y="192" width="104" height="32" rx="16" fill="#DCFCE7"/>
-    <text x="503" y="213" class="pill" fill="#166534">Local Service</text>
-    <text x="482" y="262" class="cardTitle">Bridge + MCP Server</text>
-    <text x="482" y="296" class="cardText">Runs on your machine with `stdio` MCP and</text>
-    <text x="482" y="318" class="cardText">an HTTP bridge on `127.0.0.1:17373`.</text>
-    <text x="482" y="350" class="cardText">Lists flows, locks an active target, reads,</text>
-    <text x="482" y="372" class="cardText">updates, validates, tests, and reverts.</text>
+  <g filter="url(#arch-shadow)">
+    <rect x="458" y="180" width="286" height="288" rx="26" fill="url(#arch-card)" stroke="#D6E2F0"/>
   </g>
+  <rect x="490" y="212" width="126" height="34" rx="17" fill="#DCFCE7"/>
+  <text x="514" y="234" class="step" fill="#166534">Step 2</text>
+  <text x="490" y="294" class="card-title">Local Bridge + MCP</text>
+  <text x="490" y="328" class="card-copy">Runs on your machine with stdio MCP</text>
+  <text x="490" y="352" class="card-copy">and a lightweight HTTP bridge.</text>
+  <text x="490" y="388" class="card-copy">Lists flows, locks an active target,</text>
+  <text x="490" y="412" class="card-copy">reads, validates, updates, tests,</text>
+  <text x="490" y="436" class="card-copy">reviews changes, and reverts when needed.</text>
 
-  <g filter="url(#shadow)">
-    <rect x="820" y="180" width="300" height="220" rx="24" fill="url(#card)" stroke="#D8E1EF"/>
-    <rect x="852" y="212" width="108" height="32" rx="16" fill="#FCE7F3"/>
-    <text x="874" y="233" class="pill" fill="#9D174D">Agent Side</text>
-    <text x="852" y="282" class="cardTitle">Codex + Skill</text>
-    <text x="852" y="316" class="cardText">Uses `list_flows`, `set_active_flow`,</text>
-    <text x="852" y="338" class="cardText">`get_flow`, `update_flow`, runs, and rollback.</text>
-    <text x="852" y="370" class="cardText">The skill teaches the safe workflow.</text>
+  <g filter="url(#arch-shadow)">
+    <rect x="828" y="200" width="286" height="248" rx="26" fill="url(#arch-card)" stroke="#D6E2F0"/>
   </g>
+  <rect x="860" y="232" width="112" height="34" rx="17" fill="#FCE7F3"/>
+  <text x="884" y="254" class="step" fill="#9D174D">Step 3</text>
+  <text x="860" y="314" class="card-title">Client + Skill</text>
+  <text x="860" y="348" class="card-copy">Codex or another MCP client uses</text>
+  <text x="860" y="372" class="card-copy">the server to inspect, edit, test,</text>
+  <text x="860" y="396" class="card-copy">review, and summarize flow behavior.</text>
+  <text x="860" y="432" class="card-copy">The optional skill teaches the safest path.</text>
 
-  <path d="M380 290H450" stroke="#60A5FA" stroke-width="6" stroke-linecap="round"/>
-  <path d="M435 275L450 290L435 305" stroke="#60A5FA" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"/>
-  <text x="385" y="262" class="arrowLabel">session + snapshots</text>
+  <path d="M374 324H458" stroke="#60A5FA" stroke-width="6" stroke-linecap="round"/>
+  <path d="M444 308L458 324L444 340" stroke="#60A5FA" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"/>
+  <text x="383" y="294" class="arrow-label">Auth + context</text>
 
-  <path d="M750 290H820" stroke="#60A5FA" stroke-width="6" stroke-linecap="round"/>
-  <path d="M805 275L820 290L805 305" stroke="#60A5FA" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"/>
-  <text x="758" y="262" class="arrowLabel">MCP tools</text>
+  <path d="M744 324H828" stroke="#60A5FA" stroke-width="6" stroke-linecap="round"/>
+  <path d="M814 308L828 324L814 340" stroke="#60A5FA" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"/>
+  <text x="770" y="294" class="arrow-label">MCP tools</text>
 
-  <rect x="412" y="438" width="376" height="28" rx="14" fill="#E0F2FE"/>
-  <text x="445" y="457" class="pill" fill="#075985">Key v2 idea: the target flow is explicit, not whatever tab happens to be active.</text>
+  <rect x="316" y="514" width="568" height="40" rx="20" fill="#E0F2FE"/>
+  <text x="600" y="539" text-anchor="middle" class="callout">Key idea: the target flow is explicit, not whatever browser tab happens to be active.</text>
 </svg>

@@ -99,10 +99,6 @@ If you already use MCP clients and want something genuinely useful for enterpris
 
 ## How it works
 
-<p align="center">
-  <img src="./assets/architecture.svg" alt="Architecture overview for MCP Power Automate" width="100%" />
-</p>
-
 The project has three pieces:
 
 - `server/`
