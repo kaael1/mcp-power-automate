@@ -1,7 +1,6 @@
 {
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
-  "title": "MCP Power Automate",
-  "description": "Local MCP for Microsoft Power Automate with browser-backed auth, explicit target locking, review diff, rollback, and no Microsoft Entra ID app registration requirement.",
+  "description": "Local MCP for Power Automate with browser-backed auth, target locking, review diff, and rollback.",
   "version": "0.4.1",
   "name": "io.github.kaael1/mcp-power-automate",
   "packages": [
@@ -17,6 +16,5 @@
   "repository": {
     "url": "https://github.com/kaael1/mcp-power-automate",
     "source": "github"
-  },
-  "websiteUrl": "https://github.com/kaael1/mcp-power-automate"
+  }
 }
