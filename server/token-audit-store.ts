@@ -1,39 +1,34 @@
-import { promises as fs } from 'node:fs';
-
 import type { TokenAudit } from './schemas.js';
 import { tokenAuditSchema } from './schemas.js';
-import { getDataDir, getDataFilePath } from './runtime-paths.js';
+import { getDataFilePath } from './runtime-paths.js';
+import { readVersionedStore, writeVersionedStore } from './store-utils.js';
+
+const STORE_NAME = 'token-audit';
+const STORE_VERSION = 1;
 
 let activeTokenAudit: TokenAudit | null = null;
-
-const ensureDataDir = async () => {
-  await fs.mkdir(getDataDir(), { recursive: true });
-};
 
 export const getTokenAudit = () => activeTokenAudit;
 
 export const loadTokenAudit = async () => {
-  await ensureDataDir();
-
-  try {
-    const raw = await fs.readFile(getDataFilePath('token-audit.json'), 'utf8');
-    activeTokenAudit = tokenAuditSchema.parse(JSON.parse(raw));
-    return activeTokenAudit;
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException)?.code === 'ENOENT') {
-      activeTokenAudit = null;
-      return null;
-    }
-
-    activeTokenAudit = null;
-    return null;
-  }
+  activeTokenAudit = await readVersionedStore({
+    filePath: getDataFilePath('token-audit.json'),
+    migrate: (value) => tokenAuditSchema.parse(value),
+    name: STORE_NAME,
+    parse: (value) => tokenAuditSchema.parse(value),
+    version: STORE_VERSION,
+  });
+  return activeTokenAudit;
 };
 
 export const saveTokenAudit = async (audit: TokenAudit) => {
   const parsed = tokenAuditSchema.parse(audit);
-  await ensureDataDir();
-  await fs.writeFile(getDataFilePath('token-audit.json'), `${JSON.stringify(parsed, null, 2)}\n`, 'utf8');
+  await writeVersionedStore({
+    data: parsed,
+    filePath: getDataFilePath('token-audit.json'),
+    name: STORE_NAME,
+    version: STORE_VERSION,
+  });
   activeTokenAudit = parsed;
   return parsed;
 };

@@ -23,8 +23,9 @@ Other valid distribution paths:
 ## What it helps with
 
 - choosing an explicit target flow instead of guessing from the active tab
-- using `get_status`, `list_flows`, and `set_active_flow` safely before writes
+- using `get_context`, `list_flows`, and `select_flow` safely before writes
 - validating before and after saves when possible
+- previewing a change before saving it
 - reviewing the last saved change and reverting it if needed
 - testing manual/request flows with callback URLs and run inspection
 

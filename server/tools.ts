@@ -1,12 +1,15 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 
 import {
+  applyFlowUpdate,
   cloneFlow,
   createFlow,
+  getContextPayload,
   getActiveFlow,
   getCurrentFlow,
   getLastRunSummary,
   getLastUpdateSummary,
+  previewFlowUpdate,
   getLatestRun,
   getRun,
   getRunActions,
@@ -17,12 +20,15 @@ import {
   listRuns,
   refreshFlows,
   revertLastUpdate,
+  selectFlow,
+  selectTabFlow,
   setActiveFlow,
   setActiveFlowFromTab,
   updateCurrentFlow,
   validateCurrentFlow,
   waitForRun,
 } from './power-automate-client.js';
+import { toErrorPayload } from './errors.js';
 import {
   cloneFlowInputSchema,
   createFlowInputSchema,
@@ -30,6 +36,7 @@ import {
   invokeTriggerInputSchema,
   listFlowsInputSchema,
   listRunsInputSchema,
+  optionalTargetInputSchema,
   setActiveFlowInputSchema,
   triggerCallbackInputSchema,
   updateFlowInputSchema,
@@ -39,23 +46,19 @@ import {
 
 const createTextResult = <T>(payload: T) => ({
   content: [{ type: 'text' as const, text: JSON.stringify(payload, null, 2) }],
-  structuredContent: payload,
+  structuredContent: payload as Record<string, unknown>,
 });
 
 const createErrorResult = (error: unknown) => ({
-  content: [{ type: 'text' as const, text: error instanceof Error ? error.message : String(error) }],
+  content: [{ type: 'text' as const, text: JSON.stringify(toErrorPayload(error), null, 2) }],
   isError: true,
+  structuredContent: {
+    error: toErrorPayload(error),
+  },
 });
 
 const buildHealthPayload = () => {
-  const status = getStatus();
-
-  return {
-    activeFlow: status.activeTarget || null,
-    lastRun: getLastRunSummary(),
-    lastUpdate: getLastUpdateSummary(),
-    status,
-  };
+  return getContextPayload();
 };
 
 const createJsonResource = (uri: string, payload: unknown) => ({
@@ -83,6 +86,17 @@ export const createMcpApp = () => {
       title: 'Power Automate Status',
     },
     async () => createJsonResource('power-automate://status', buildHealthPayload()),
+  );
+
+  server.registerResource(
+    'power-automate-context',
+    'power-automate://context',
+    {
+      description: 'Current Power Automate context, capabilities, and cached summaries.',
+      mimeType: 'application/json',
+      title: 'Power Automate Context',
+    },
+    async () => createJsonResource('power-automate://context', getContextPayload()),
   );
 
   server.registerResource(
@@ -128,6 +142,20 @@ export const createMcpApp = () => {
   );
 
   server.registerTool(
+    'get_context',
+    {
+      description: 'Return the current Power Automate context, capabilities, and cached run/update summaries.',
+    },
+    async () => {
+      try {
+        return createTextResult(getContextPayload());
+      } catch (error) {
+        return createErrorResult(error);
+      }
+    },
+  );
+
+  server.registerTool(
     'list_flows',
     {
       description: 'List flows from the currently captured environment and optionally filter by name.',
@@ -150,6 +178,35 @@ export const createMcpApp = () => {
     async () => {
       try {
         return createTextResult(await refreshFlows());
+      } catch (error) {
+        return createErrorResult(error);
+      }
+    },
+  );
+
+  server.registerTool(
+    'select_flow',
+    {
+      description: 'Select which flow the MCP should operate on inside the current environment.',
+      inputSchema: setActiveFlowInputSchema,
+    },
+    async ({ flowId }) => {
+      try {
+        return createTextResult(await selectFlow({ flowId }));
+      } catch (error) {
+        return createErrorResult(error);
+      }
+    },
+  );
+
+  server.registerTool(
+    'select_tab_flow',
+    {
+      description: 'Set the active flow target from the currently captured browser tab flow.',
+    },
+    async () => {
+      try {
+        return createTextResult(await selectTabFlow());
       } catch (error) {
         return createErrorResult(error);
       }
@@ -247,10 +304,41 @@ export const createMcpApp = () => {
     'get_flow',
     {
       description: 'Fetch the selected Power Automate flow target and return a normalized editable payload.',
+      inputSchema: optionalTargetInputSchema,
     },
-    async () => {
+    async ({ target }) => {
       try {
-        return createTextResult(await getCurrentFlow());
+        return createTextResult(await getCurrentFlow({ target }));
+      } catch (error) {
+        return createErrorResult(error);
+      }
+    },
+  );
+
+  server.registerTool(
+    'preview_flow_update',
+    {
+      description: 'Preview a flow edit without saving it, returning the proposed review diff and summary.',
+      inputSchema: updateFlowInputSchema,
+    },
+    async ({ displayName, flow, target }) => {
+      try {
+        return createTextResult(await previewFlowUpdate({ displayName, flow, target }));
+      } catch (error) {
+        return createErrorResult(error);
+      }
+    },
+  );
+
+  server.registerTool(
+    'apply_flow_update',
+    {
+      description: 'Apply a flow edit and return the saved flow plus the persisted review diff.',
+      inputSchema: updateFlowInputSchema,
+    },
+    async ({ displayName, flow, target }) => {
+      try {
+        return createTextResult(await applyFlowUpdate({ displayName, flow, target }));
       } catch (error) {
         return createErrorResult(error);
       }
@@ -264,9 +352,9 @@ export const createMcpApp = () => {
         'Update the selected flow using the normalized flow payload returned by get_flow. The existing environment metadata is preserved automatically.',
       inputSchema: updateFlowInputSchema,
     },
-    async ({ displayName, flow }) => {
+    async ({ displayName, flow, target }) => {
       try {
-        return createTextResult(await updateCurrentFlow({ displayName, flow }));
+        return createTextResult(await updateCurrentFlow({ displayName, flow, target }));
       } catch (error) {
         return createErrorResult(error);
       }
@@ -279,9 +367,9 @@ export const createMcpApp = () => {
       description: 'List recent runs for the selected flow target.',
       inputSchema: listRunsInputSchema,
     },
-    async ({ limit }) => {
+    async ({ limit, target }) => {
       try {
-        return createTextResult(await listRuns({ limit }));
+        return createTextResult(await listRuns({ limit, target }));
       } catch (error) {
         return createErrorResult(error);
       }
@@ -292,10 +380,11 @@ export const createMcpApp = () => {
     'get_latest_run',
     {
       description: 'Return the most recent run for the selected flow target.',
+      inputSchema: optionalTargetInputSchema,
     },
-    async () => {
+    async ({ target }) => {
       try {
-        return createTextResult(await getLatestRun());
+        return createTextResult(await getLatestRun({ target }));
       } catch (error) {
         return createErrorResult(error);
       }
@@ -308,9 +397,9 @@ export const createMcpApp = () => {
       description: 'Return the callback URL for the selected flow trigger when the trigger supports manual invocation.',
       inputSchema: triggerCallbackInputSchema,
     },
-    async ({ triggerName }) => {
+    async ({ target, triggerName }) => {
       try {
-        return createTextResult(await getTriggerCallbackUrl({ triggerName }));
+        return createTextResult(await getTriggerCallbackUrl({ target, triggerName }));
       } catch (error) {
         return createErrorResult(error);
       }
@@ -323,9 +412,9 @@ export const createMcpApp = () => {
       description: 'Invoke the selected flow trigger using its callback URL when the trigger supports manual execution.',
       inputSchema: invokeTriggerInputSchema,
     },
-    async ({ body, triggerName }) => {
+    async ({ body, target, triggerName }) => {
       try {
-        return createTextResult(await invokeTrigger({ body, triggerName }));
+        return createTextResult(await invokeTrigger({ body, target, triggerName }));
       } catch (error) {
         return createErrorResult(error);
       }
@@ -338,9 +427,9 @@ export const createMcpApp = () => {
       description: 'Return details for a specific run of the selected flow target.',
       inputSchema: getRunInputSchema,
     },
-    async ({ runId }) => {
+    async ({ runId, target }) => {
       try {
-        return createTextResult(await getRun({ runId }));
+        return createTextResult(await getRun({ runId, target }));
       } catch (error) {
         return createErrorResult(error);
       }
@@ -353,9 +442,9 @@ export const createMcpApp = () => {
       description: 'Return action-level statuses for a specific run of the selected flow target.',
       inputSchema: getRunInputSchema,
     },
-    async ({ runId }) => {
+    async ({ runId, target }) => {
       try {
-        return createTextResult(await getRunActions({ runId }));
+        return createTextResult(await getRunActions({ runId, target }));
       } catch (error) {
         return createErrorResult(error);
       }
@@ -369,9 +458,9 @@ export const createMcpApp = () => {
         'Poll the latest run or a specific run until it reaches a terminal status or a timeout is reached.',
       inputSchema: waitForRunInputSchema,
     },
-    async ({ pollIntervalSeconds, runId, timeoutSeconds }) => {
+    async ({ pollIntervalSeconds, runId, target, timeoutSeconds }) => {
       try {
-        return createTextResult(await waitForRun({ pollIntervalSeconds, runId, timeoutSeconds }));
+        return createTextResult(await waitForRun({ pollIntervalSeconds, runId, target, timeoutSeconds }));
       } catch (error) {
         return createErrorResult(error);
       }
@@ -416,10 +505,11 @@ export const createMcpApp = () => {
     {
       description:
         'Revert the selected flow target to the last successfully recorded before-state. The target flow must match the last updated flow.',
+      inputSchema: optionalTargetInputSchema,
     },
-    async () => {
+    async ({ target }) => {
       try {
-        return createTextResult(await revertLastUpdate());
+        return createTextResult(await revertLastUpdate({ target }));
       } catch (error) {
         return createErrorResult(error);
       }
@@ -433,9 +523,9 @@ export const createMcpApp = () => {
         'Validate the selected flow definition using the legacy Power Automate validation endpoints when available.',
       inputSchema: validateFlowInputSchema,
     },
-    async ({ flow }) => {
+    async ({ flow, target }) => {
       try {
-        return createTextResult(await validateCurrentFlow({ flow }));
+        return createTextResult(await validateCurrentFlow({ flow, target }));
       } catch (error) {
         return createErrorResult(error);
       }

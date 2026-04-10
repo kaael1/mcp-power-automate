@@ -322,9 +322,17 @@ const buildAttentionItems = ({
 
 export const deriveDashboardModel = (payload: DashboardPayload, locale: Locale = 'en'): DashboardModel => {
   const status = payload.status;
+  const context = status.context?.context || null;
   const flowCatalog = payload.flowCatalog;
   const catalogFlows = flowCatalog?.flows || [];
-  const activeFlow = (status.activeFlow || null) as
+  const activeFlow = (
+    context ?
+      {
+        activeTarget: context.selection.activeTarget,
+        currentTab: context.selection.currentTab,
+      }
+    : status.activeFlow || null
+  ) as
     | {
         activeTarget?: {
           displayName?: string | null;
@@ -374,14 +382,25 @@ export const deriveDashboardModel = (payload: DashboardPayload, locale: Locale =
     Boolean(activeTarget?.flowId && currentTab?.flowId && activeTarget.flowId !== currentTab.flowId);
   const bridgeOnline = Boolean(status.bridge?.ok);
   const hasSession =
-    Boolean(status.session) ||
-    Boolean((status.bridge as { hasSession?: boolean } | null)?.hasSession) ||
-    Boolean(activeTarget?.flowId);
+    context?.session.connected ??
+    (Boolean(status.session) ||
+      Boolean((status.bridge as { hasSession?: boolean } | null)?.hasSession) ||
+      Boolean(activeTarget?.flowId));
   const hasLegacyApi =
-    Boolean(status.session?.legacyApiUrl && status.session?.legacyToken) ||
-    hasLegacyTokenAuditCandidate(status) ||
-    Boolean((status.bridge as { hasLegacyApi?: boolean } | null)?.hasLegacyApi);
-  const error = status.error || status.lastError || null;
+    context?.capabilities.canUseLegacyApi.available ??
+    (Boolean(status.session?.legacyApiUrl && status.session?.legacyToken) ||
+      hasLegacyTokenAuditCandidate(status) ||
+      Boolean((status.bridge as { hasLegacyApi?: boolean } | null)?.hasLegacyApi));
+  const error =
+    status.error ||
+    status.lastError ||
+    (context && !context.diagnostics.storeHealth.ok ?
+      t(
+        locale,
+        'One or more local state files are corrupted. Refresh the flow page or clear local state.',
+        'Um ou mais arquivos de estado local estão corrompidos. Atualize a página do fluxo ou limpe o estado local.',
+      )
+    : null);
 
   const statusLabel = !bridgeOnline
     ? t(locale, 'Offline', 'Offline')
@@ -453,13 +472,19 @@ export const deriveDashboardModel = (payload: DashboardPayload, locale: Locale =
       locale,
       selectedTargetMismatch,
     }),
-    bridgeMode: status.bridge?.bridgeMode || null,
+    bridgeMode: context?.diagnostics.bridgeMode || status.bridge?.bridgeMode || null,
     bridgeOnline,
     catalogFlows,
     currentTab,
     diagnostics: {
-      capturedAt: status.session?.capturedAt || status.bridge?.capturedAt || null,
-      envId: status.session?.envId || activeTarget?.envId || currentTab?.envId || null,
+      capturedAt: context?.session.capturedAt || status.session?.capturedAt || status.bridge?.capturedAt || null,
+      envId:
+        context?.session.envId ||
+        context?.selection.resolvedTarget?.envId ||
+        status.session?.envId ||
+        activeTarget?.envId ||
+        currentTab?.envId ||
+        null,
       error,
       lastSentAt: status.lastSentAt || null,
       snapshotSource: status.snapshot?.source || null,

@@ -32,7 +32,10 @@ describe('stores', () => {
     await sessionStore.saveSession(validSession);
 
     const savedFile = await readFile(path.join(tempDir, 'session.json'), 'utf8');
-    expect(JSON.parse(savedFile)).toMatchObject(validSession);
+    expect(JSON.parse(savedFile)).toMatchObject({
+      data: validSession,
+      version: 1,
+    });
     expect(sessionStore.getSessionFilePath()).toBe(path.join(tempDir, 'session.json'));
   });
 
@@ -103,8 +106,27 @@ describe('stores', () => {
 
     const persisted = JSON.parse(await readFile(path.join(tempDir, 'last-run.json'), 'utf8'));
 
-    expect(persisted.activeKey).toBe('env-1:flow-1');
-    expect(Object.keys(persisted.records)).toContain('env-1:flow-1');
-    expect(persisted.records['env-1:flow-1'].run.runId).toBe('run-2');
+    expect(persisted.version).toBe(1);
+    expect(persisted.data.activeKey).toBe('env-1:flow-1');
+    expect(Object.keys(persisted.data.records)).toContain('env-1:flow-1');
+    expect(persisted.data.records['env-1:flow-1'].run.runId).toBe('run-2');
+  });
+
+  it('marks corrupted stores in diagnostics instead of silently treating them as healthy', async () => {
+    await writeFile(path.join(tempDir, 'session.json'), '{not-json', 'utf8');
+
+    const sessionStore = await import('../server/session-store.js');
+    const diagnostics = await import('../server/store-utils.js');
+    const loaded = await sessionStore.loadSession();
+
+    expect(loaded).toBeNull();
+    expect(diagnostics.getStoreDiagnostics()).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          name: 'session',
+          state: 'corrupted',
+        }),
+      ]),
+    );
   });
 });

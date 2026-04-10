@@ -6,6 +6,7 @@ import { ZodError } from 'zod';
 
 import type {
   BridgeErrorResponse,
+  ContextPayload,
   HealthPayload,
   LastRunResponse,
   LastUpdateResponse,
@@ -20,15 +21,17 @@ import { loadFlowCatalog } from './flow-catalog-store.js';
 import { getFlowSnapshot, loadFlowSnapshot, saveFlowSnapshot } from './flow-snapshot-store.js';
 import {
   getActiveFlow,
+  getContextPayload,
   getLastRunSummary,
   getLastUpdateSummary,
   listFlows,
   refreshFlows,
   refreshLatestRun,
   revertLastUpdate,
-  setActiveFlow,
-  setActiveFlowFromTab,
+  selectFlow,
+  selectTabFlow,
 } from './power-automate-client.js';
+import { toErrorPayload } from './errors.js';
 import { getLastRun, loadLastRun } from './last-run-store.js';
 import { bridgeHost, bridgePort, flowIdSchema, flowSnapshotSchema, sessionSchema, tokenAuditSchema } from './schemas.js';
 import { getSession, loadSession, saveSession } from './session-store.js';
@@ -65,6 +68,17 @@ const readJsonBody = async (request: IncomingMessage) =>
       }
     });
   });
+
+const toBridgeErrorResponse = (error: unknown): BridgeErrorResponse => {
+  const payload = toErrorPayload(error);
+
+  return {
+    code: payload.code,
+    details: payload.details,
+    error: payload.message,
+    retryable: payload.retryable,
+  };
+};
 
 const hasLegacyTokenAuditCandidate = () => {
   const tokenAudit = getTokenAudit();
@@ -130,6 +144,11 @@ export const createBridgeServer = () =>
 
       if (request.method === 'GET' && requestUrl.pathname === '/health') {
         sendJson(response, 200, createHealthPayload());
+        return;
+      }
+
+      if (request.method === 'GET' && requestUrl.pathname === '/context') {
+        sendJson(response, 200, getContextPayload({ bridgeMode: ownsBridgeServer ? 'owned' : 'reused' }) satisfies ContextPayload);
         return;
       }
 
@@ -231,7 +250,7 @@ export const createBridgeServer = () =>
         const body = await readJsonBody(request);
         const flowId = flowIdSchema.parse((body as { flowId?: string }).flowId);
         sendJson(response, 200, {
-          activeFlow: await setActiveFlow({ flowId }),
+          activeFlow: await selectFlow({ flowId }),
           ok: true,
         });
         return;
@@ -239,7 +258,25 @@ export const createBridgeServer = () =>
 
       if (request.method === 'POST' && requestUrl.pathname === '/active-flow/from-tab') {
         sendJson(response, 200, {
-          activeFlow: await setActiveFlowFromTab(),
+          activeFlow: await selectTabFlow(),
+          ok: true,
+        });
+        return;
+      }
+
+      if (request.method === 'POST' && requestUrl.pathname === '/select-flow') {
+        const body = await readJsonBody(request);
+        const flowId = flowIdSchema.parse((body as { flowId?: string }).flowId);
+        sendJson(response, 200, {
+          activeFlow: await selectFlow({ flowId }),
+          ok: true,
+        });
+        return;
+      }
+
+      if (request.method === 'POST' && requestUrl.pathname === '/select-flow/from-tab') {
+        sendJson(response, 200, {
+          activeFlow: await selectTabFlow(),
           ok: true,
         });
         return;
@@ -248,7 +285,7 @@ export const createBridgeServer = () =>
       if (request.method === 'POST' && requestUrl.pathname === '/revert-last-update') {
         const reverted = await revertLastUpdate();
         sendJson(response, 200, {
-          flowId: reverted.flowId,
+          flowId: reverted.flow.flowId,
           ok: true,
           reverted,
         } satisfies RevertLastUpdateResponse);
@@ -268,15 +305,15 @@ export const createBridgeServer = () =>
     } catch (error) {
       if (error instanceof ZodError) {
         sendJson(response, 400, {
+          code: 'INVALID_REQUEST',
           details: error.issues,
           error: 'Invalid request payload.',
+          retryable: false,
         } satisfies BridgeErrorResponse);
         return;
       }
 
-      sendJson(response, 500, {
-        error: error instanceof Error ? error.message : String(error),
-      } satisfies BridgeErrorResponse);
+      sendJson(response, 500, toBridgeErrorResponse(error));
     }
   });
 

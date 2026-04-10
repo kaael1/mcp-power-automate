@@ -10,6 +10,10 @@ export const envIdSchema = z.string().trim().min(1, 'envId is required');
 export const tokenSchema = z.string().trim().min(1, 'token is required');
 export const baseUrlSchema = z.string().url('baseUrl must be a valid URL');
 export const selectionSourceSchema = z.enum(['clone-result', 'create-result', 'manual', 'tab-capture']);
+export const targetRefSchema = z.object({
+  envId: envIdSchema,
+  flowId: flowIdSchema,
+});
 
 export const sessionSchema = z.object({
   apiToken: tokenSchema,
@@ -60,10 +64,12 @@ export const activeTargetSchema = z.object({
 export const updateFlowInputSchema = z.object({
   displayName: z.string().trim().min(1).optional(),
   flow: flowContentSchema,
+  target: targetRefSchema.optional(),
 });
 
 export const validateFlowInputSchema = z.object({
   flow: flowContentSchema,
+  target: targetRefSchema.optional(),
 });
 
 export const flowSnapshotSchema = z.object({
@@ -183,6 +189,7 @@ export const lastRunSchema = z.object({
 
 export const listRunsInputSchema = z.object({
   limit: z.number().int().positive().max(50).optional(),
+  target: targetRefSchema.optional(),
 });
 
 export const listFlowsInputSchema = z.object({
@@ -192,6 +199,10 @@ export const listFlowsInputSchema = z.object({
 
 export const setActiveFlowInputSchema = z.object({
   flowId: flowIdSchema,
+});
+
+export const optionalTargetInputSchema = z.object({
+  target: targetRefSchema.optional(),
 });
 
 export const createFlowInputSchema = z.object({
@@ -207,26 +218,31 @@ export const cloneFlowInputSchema = z.object({
 
 export const getRunInputSchema = z.object({
   runId: z.string().trim().min(1, 'runId is required'),
+  target: targetRefSchema.optional(),
 });
 
 export const waitForRunInputSchema = z.object({
   pollIntervalSeconds: z.number().int().positive().max(30).optional(),
   runId: z.string().trim().min(1).optional(),
+  target: targetRefSchema.optional(),
   timeoutSeconds: z.number().int().positive().max(600).optional(),
 });
 
 export const triggerCallbackInputSchema = z.object({
   triggerName: z.string().trim().min(1).optional(),
+  target: targetRefSchema.optional(),
 });
 
 export const invokeTriggerInputSchema = z.object({
   body: z.unknown().optional(),
+  target: targetRefSchema.optional(),
   triggerName: z.string().trim().min(1).optional(),
 });
 
 export type FlowId = z.infer<typeof flowIdSchema>;
 export type EnvId = z.infer<typeof envIdSchema>;
 export type SelectionSource = z.infer<typeof selectionSourceSchema>;
+export type TargetRef = z.infer<typeof targetRefSchema>;
 export type Session = z.infer<typeof sessionSchema>;
 export type FlowContent = z.infer<typeof flowContentSchema>;
 export type FlowCatalogItem = z.infer<typeof flowCatalogItemSchema>;
@@ -251,6 +267,7 @@ export type LastRun = z.infer<typeof lastRunSchema>;
 export type ListRunsInput = z.infer<typeof listRunsInputSchema>;
 export type ListFlowsInput = z.infer<typeof listFlowsInputSchema>;
 export type SetActiveFlowInput = z.infer<typeof setActiveFlowInputSchema>;
+export type OptionalTargetInput = z.infer<typeof optionalTargetInputSchema>;
 export type CreateFlowInput = z.infer<typeof createFlowInputSchema>;
 export type CloneFlowInput = z.infer<typeof cloneFlowInputSchema>;
 export type GetRunInput = z.infer<typeof getRunInputSchema>;

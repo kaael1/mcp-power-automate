@@ -1,16 +1,14 @@
-import { promises as fs } from 'node:fs';
-
 import { makeFlowKey } from './flow-key.js';
 import type { FlowSnapshot } from './schemas.js';
 import { flowSnapshotSchema } from './schemas.js';
-import { getDataDir, getDataFilePath } from './runtime-paths.js';
+import { getDataFilePath } from './runtime-paths.js';
+import { readVersionedStore, writeVersionedStore } from './store-utils.js';
+
+const STORE_NAME = 'flow-snapshot';
+const STORE_VERSION = 1;
 
 let activeKey: string | null = null;
 let snapshotsByKey: Record<string, FlowSnapshot> = {};
-
-const ensureDataDir = async () => {
-  await fs.mkdir(getDataDir(), { recursive: true });
-};
 
 const normalizeStoredShape = (rawValue: unknown) => {
   const recordsSource = (rawValue as { records?: Record<string, unknown> } | null | undefined)?.records;
@@ -52,36 +50,38 @@ export const getFlowSnapshotForFlow = ({ envId, flowId }: { envId: string; flowI
   snapshotsByKey[makeFlowKey({ envId, flowId })] || null;
 
 export const loadFlowSnapshot = async () => {
-  await ensureDataDir();
+  const normalized = await readVersionedStore({
+    filePath: getDataFilePath('flow-snapshot.json'),
+    migrate: normalizeStoredShape,
+    name: STORE_NAME,
+    parse: normalizeStoredShape,
+    version: STORE_VERSION,
+  });
 
-  try {
-    const raw = await fs.readFile(getDataFilePath('flow-snapshot.json'), 'utf8');
-    const normalized = normalizeStoredShape(JSON.parse(raw));
-    activeKey = normalized.activeKey;
-    snapshotsByKey = normalized.records;
-    return getPersistedShape();
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException)?.code === 'ENOENT') {
-      activeKey = null;
-      snapshotsByKey = {};
-      return null;
-    }
-
+  if (!normalized) {
     activeKey = null;
     snapshotsByKey = {};
     return null;
   }
+
+  activeKey = normalized.activeKey;
+  snapshotsByKey = normalized.records;
+  return getPersistedShape();
 };
 
 export const saveFlowSnapshot = async (snapshot: FlowSnapshot) => {
   const parsed = flowSnapshotSchema.parse(snapshot);
   const key = makeFlowKey(parsed);
-  await ensureDataDir();
   snapshotsByKey = {
     ...snapshotsByKey,
     [key]: parsed,
   };
   activeKey = key;
-  await fs.writeFile(getDataFilePath('flow-snapshot.json'), `${JSON.stringify(getPersistedShape(), null, 2)}\n`, 'utf8');
+  await writeVersionedStore({
+    data: getPersistedShape(),
+    filePath: getDataFilePath('flow-snapshot.json'),
+    name: STORE_NAME,
+    version: STORE_VERSION,
+  });
   return parsed;
 };

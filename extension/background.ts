@@ -1,4 +1,4 @@
-import type { PopupStatusPayload, PopupTokenMeta } from '../server/bridge-types.js';
+import type { ContextPayload, PopupStatusPayload, PopupTokenMeta } from '../server/bridge-types.js';
 import type { FlowSnapshot, LastRun, LastUpdate, Session, TokenAudit } from '../server/schemas.js';
 import { decodeJwtPayload, scoreToken } from './token-utils.js';
 import { buildBaseUrl, extractAuthorization, extractFromApiUrl, extractFromPortalUrl } from './url-utils.js';
@@ -221,6 +221,17 @@ const getLastUpdateFromBridge = async () => {
   return (body.lastUpdate || null) as LastUpdate | null;
 };
 
+const getContextFromBridge = async () => {
+  const response = await fetch(`${BRIDGE_URL}/context`);
+  const body = await response.json();
+
+  if (!response.ok) {
+    throw new Error(body.error || `Context bridge request failed with ${response.status}`);
+  }
+
+  return body as ContextPayload;
+};
+
 const getLastRunFromBridge = async () => {
   const response = await fetch(`${BRIDGE_URL}/last-run`);
   const body = await response.json();
@@ -399,6 +410,7 @@ const getPopupStatus = async (): Promise<PopupStatusPayload> => {
   const storage = await getStorage(Object.values(STORAGE_KEYS));
   const health = await checkBridgeHealth();
   let activeFlow = storage[STORAGE_KEYS.activeFlow] || null;
+  let context = (storage[STORAGE_KEYS.lastContext] as ContextPayload | null) || null;
   let lastError = (storage[STORAGE_KEYS.lastError] as string | null) || null;
   let lastRun = (storage[STORAGE_KEYS.lastRun] as LastRun | null) || null;
   let lastUpdate = (storage[STORAGE_KEYS.lastUpdate] as LastUpdate | null) || null;
@@ -409,35 +421,63 @@ const getPopupStatus = async (): Promise<PopupStatusPayload> => {
   }
 
   try {
-    lastRun = await getLastRunFromBridge();
+    context = await getContextFromBridge();
     await setStorage({
-      [STORAGE_KEYS.lastRun]: lastRun,
+      [STORAGE_KEYS.lastContext]: context,
     });
-  } catch {
-    // Keep cached run info if the bridge cannot answer.
-  }
-
-  try {
-    lastUpdate = await getLastUpdateFromBridge();
+    activeFlow = {
+      activeTarget: context.context.selection.activeTarget,
+      currentTab: context.context.selection.currentTab,
+    };
+    lastRun = context.lastRun;
+    lastUpdate = context.lastUpdate;
     await setStorage({
+      [STORAGE_KEYS.activeFlow]: activeFlow,
+      [STORAGE_KEYS.lastRun]: lastRun,
       [STORAGE_KEYS.lastUpdate]: lastUpdate,
     });
   } catch {
-    // Keep cached update info if the bridge cannot answer.
-  }
+    try {
+      lastRun = await getLastRunFromBridge();
+      await setStorage({
+        [STORAGE_KEYS.lastRun]: lastRun,
+      });
+    } catch {
+      // Keep cached run info if the bridge cannot answer.
+    }
 
-  try {
-    activeFlow = await getActiveFlowFromBridge();
-    await setStorage({
-      [STORAGE_KEYS.activeFlow]: activeFlow,
-    });
-  } catch {
-    // Keep cached active flow info if the bridge cannot answer.
+    try {
+      lastUpdate = await getLastUpdateFromBridge();
+      await setStorage({
+        [STORAGE_KEYS.lastUpdate]: lastUpdate,
+      });
+    } catch {
+      // Keep cached update info if the bridge cannot answer.
+    }
+
+    try {
+      activeFlow = await getActiveFlowFromBridge();
+      await setStorage({
+        [STORAGE_KEYS.activeFlow]: activeFlow,
+      });
+    } catch {
+      // Keep cached active flow info if the bridge cannot answer.
+    }
   }
 
   return {
     activeFlow,
-    bridge: health as PopupStatusPayload['bridge'],
+    bridge:
+      context ?
+        {
+          ...(health as PopupStatusPayload['bridge']),
+          capturedAt: context.context.session.capturedAt,
+          envId: context.context.session.envId || context.context.selection.resolvedTarget?.envId || null,
+          hasLegacyApi: context.context.capabilities.canUseLegacyApi.available,
+          hasSession: context.context.session.connected,
+        }
+      : (health as PopupStatusPayload['bridge']),
+    context,
     lastError,
     lastRun,
     lastSentAt: (storage[STORAGE_KEYS.lastSentAt] as string | null) || null,

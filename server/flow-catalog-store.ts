@@ -1,14 +1,12 @@
-import { promises as fs } from 'node:fs';
-
 import type { FlowCatalog } from './schemas.js';
 import { flowCatalogSchema } from './schemas.js';
-import { getDataDir, getDataFilePath } from './runtime-paths.js';
+import { getDataFilePath } from './runtime-paths.js';
+import { readVersionedStore, writeVersionedStore } from './store-utils.js';
+
+const STORE_NAME = 'flow-catalog';
+const STORE_VERSION = 1;
 
 let flowCatalog: FlowCatalog | null = null;
-
-const ensureDataDir = async () => {
-  await fs.mkdir(getDataDir(), { recursive: true });
-};
 
 export const getFlowCatalog = () => flowCatalog;
 
@@ -18,27 +16,24 @@ export const getFlowCatalogForEnv = (envId: string) => {
 };
 
 export const loadFlowCatalog = async () => {
-  await ensureDataDir();
-
-  try {
-    const raw = await fs.readFile(getDataFilePath('flow-catalog.json'), 'utf8');
-    flowCatalog = flowCatalogSchema.parse(JSON.parse(raw));
-    return flowCatalog;
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException)?.code === 'ENOENT') {
-      flowCatalog = null;
-      return null;
-    }
-
-    flowCatalog = null;
-    return null;
-  }
+  flowCatalog = await readVersionedStore({
+    filePath: getDataFilePath('flow-catalog.json'),
+    migrate: (value) => flowCatalogSchema.parse(value),
+    name: STORE_NAME,
+    parse: (value) => flowCatalogSchema.parse(value),
+    version: STORE_VERSION,
+  });
+  return flowCatalog;
 };
 
 export const saveFlowCatalog = async (catalog: FlowCatalog) => {
   const parsed = flowCatalogSchema.parse(catalog);
-  await ensureDataDir();
-  await fs.writeFile(getDataFilePath('flow-catalog.json'), `${JSON.stringify(parsed, null, 2)}\n`, 'utf8');
+  await writeVersionedStore({
+    data: parsed,
+    filePath: getDataFilePath('flow-catalog.json'),
+    name: STORE_NAME,
+    version: STORE_VERSION,
+  });
   flowCatalog = parsed;
   return parsed;
 };

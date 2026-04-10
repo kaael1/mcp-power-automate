@@ -35,8 +35,8 @@ This skill assumes:
 Always follow these rules:
 
 1. Treat the active browser flow as the target flow.
-2. Use `list_flows` plus `set_active_flow` before any meaningful edit or test.
-3. Use `get_status` before writes to confirm the selected target flow and current tab flow are not being confused.
+2. Use `list_flows` plus `select_flow` before any meaningful edit or test.
+3. Use `get_context` before writes to confirm the selected target flow, current tab flow, and capabilities are not being confused.
 4. Do not edit if the user says another person or agent is actively editing the same flow.
 5. Prefer minimal changes and validate before and after save.
 6. Refresh the browser tab after save when the user needs visual confirmation.
@@ -49,7 +49,7 @@ Important limitations:
 
 - The MCP no longer follows the active tab automatically once a target flow is selected.
 - The browser tab still provides auth and current-environment context.
-- The agent should explicitly choose a target with `list_flows` and `set_active_flow`.
+- The agent should explicitly choose a target with `list_flows` and `select_flow`.
 - The system depends on browser-backed session and token capture.
 - Rollback is currently only one step deep.
 - The extension now shows a structured post-save review diff, but it is still not an approval gate before save.
@@ -63,7 +63,7 @@ Use this when the user asks what the flow does.
 
 Steps:
 
-1. Call `get_status`.
+1. Call `get_context`.
 2. Call `list_flows` if the selected target is unclear.
 3. Call `get_flow`.
 4. Optionally call `validate_flow`.
@@ -75,15 +75,16 @@ Use this when the user asks for a flow change.
 
 Steps:
 
-1. Call `get_status`.
-2. Call `list_flows` and `set_active_flow` unless the target is already explicit and confirmed.
+1. Call `get_context`.
+2. Call `list_flows` and `select_flow` unless the target is already explicit and confirmed.
 3. Call `get_flow`.
 4. Plan the smallest possible change.
-5. Call `validate_flow` on the candidate flow before save when possible.
-6. Call `update_flow`.
-7. Call `get_last_update`.
-8. Ask the user to refresh the tab, or review the saved change in the extension `Review` workspace before continuing.
-9. If the change looks wrong, call `revert_last_update`.
+5. Call `preview_flow_update`.
+6. Call `validate_flow` on the candidate flow before save when possible.
+7. Call `apply_flow_update`.
+8. Call `get_last_update`.
+9. Ask the user to refresh the tab, or review the saved change in the extension `Review` workspace before continuing.
+10. If the change looks wrong, call `revert_last_update`.
 
 ### 3. Manual trigger test workflow
 
@@ -92,7 +93,7 @@ Use this when the flow has a trigger that supports callback invocation.
 Steps:
 
 1. Call `get_flow` and confirm the trigger is manual/request based.
-2. If needed, call `list_flows` and `set_active_flow` first.
+2. If needed, call `list_flows` and `select_flow` first.
 3. Call `get_trigger_callback_url`.
 4. Call `invoke_trigger` with a controlled test payload.
 5. Call `wait_for_run`.
@@ -115,6 +116,7 @@ Steps:
 
 ## Tool quick reference
 
+- `get_context`
 - `get_status`
   Confirms the selected target flow, current tab flow, environment, and whether legacy access is available.
 
@@ -127,9 +129,11 @@ Steps:
 - `refresh_flows`
   Refreshes the current environment flow catalog from Power Automate.
 
+- `select_flow`
 - `set_active_flow`
   Locks the MCP onto a specific `flowId` in the current environment.
 
+- `select_tab_flow`
 - `set_active_flow_from_tab`
   Re-targets the MCP to the flow currently open in the captured browser tab.
 
@@ -146,6 +150,8 @@ Steps:
   Clones an existing flow and can optionally make the clone the active target.
 
 - `validate_flow`
+- `preview_flow_update`
+- `apply_flow_update`
   Uses the legacy flow API to validate the current definition.
 
 - `update_flow`
@@ -220,7 +226,7 @@ If the MCP looks installed but tools do not appear or the session behaves incons
 1. Check the local bridge health at `http://127.0.0.1:17373/health`.
 2. Confirm the browser extension shows the expected selected target flow and current browser flow.
 3. Open the side panel `System` section when you need environment, capture, token, or bridge details.
-4. If needed, use `set_active_flow_from_tab` or the extension quick action to lock the current tab as the target.
+4. If needed, use `select_tab_flow` or the extension quick action to lock the current tab as the target.
 5. Refresh the Power Automate tab after reloading the extension.
 6. If port `17373` is busy, prefer reusing the healthy bridge instead of starting another manual copy.
 7. If the bridge is unhealthy, stop the stale process and start a fresh session.

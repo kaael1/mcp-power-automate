@@ -44,7 +44,7 @@ The server is MCP-client agnostic.
 | Common pain | What this repo gives you |
 | --- | --- |
 | Enterprise setup friction before first success | Browser-backed auth from your existing logged-in session |
-| Risk of editing the wrong flow | Explicit `set_active_flow` targeting plus current-tab sync |
+| Risk of editing the wrong flow | Explicit `select_flow` targeting plus current-tab sync |
 | Hard to trust AI changes | Post-save review diff and one-step revert |
 | Slow manual inspection and run triage | MCP tools for flow reads, validation, runs, actions, and trigger tests |
 
@@ -73,7 +73,7 @@ Load the extension:
 Open Power Automate, refresh any flow page, and ask your MCP client to:
 
 1. `list_flows`
-2. `set_active_flow`
+2. `select_flow`
 3. `get_flow`
 
 In practice, most users start with three wins:
@@ -131,6 +131,7 @@ This gives you a good tradeoff:
 - List flows from the current environment
 - Merge `owned`, `shared-user`, and `portal-shared` flows into one catalog
 - Lock the MCP onto an explicit active target flow
+- Preview changes before saving them
 - Validate flows with legacy validation endpoints
 - Update a flow and keep one-step rollback history
 - Create a blank request or recurrence flow
@@ -197,8 +198,8 @@ bun run check
 2. Open any flow in the target Power Automate environment.
 3. Let the extension capture auth and environment context.
 4. Ask Codex to `list_flows`.
-5. Ask Codex to `set_active_flow` for the flow you actually want.
-6. Continue with `get_flow`, `validate_flow`, `update_flow`, `list_runs`, `get_run`, `wait_for_run`, or `invoke_trigger`.
+5. Ask Codex to `select_flow` for the flow you actually want.
+6. Continue with `get_context`, `get_flow`, `preview_flow_update`, `validate_flow`, `apply_flow_update`, `list_runs`, `get_run`, `wait_for_run`, or `invoke_trigger`.
 
 The popup and side panel help you:
 
@@ -218,14 +219,19 @@ The popup and side panel help you:
 
 ## Available MCP tools
 
+- `get_context`
 - `get_status`
 - `get_health`
 - `list_flows`
 - `refresh_flows`
+- `select_flow`
+- `select_tab_flow`
 - `set_active_flow`
 - `set_active_flow_from_tab`
 - `get_active_flow`
 - `get_flow`
+- `preview_flow_update`
+- `apply_flow_update`
 - `update_flow`
 - `create_flow`
 - `clone_flow`
@@ -241,9 +247,22 @@ The popup and side panel help you:
 - `get_trigger_callback_url`
 - `invoke_trigger`
 
+Recommended v1 workflow:
+
+- `get_context`
+- `list_flows`
+- `select_flow`
+- `get_flow`
+- `preview_flow_update`
+- `validate_flow`
+- `apply_flow_update`
+
+Legacy aliases such as `get_status`, `set_active_flow`, and `update_flow` remain available for compatibility.
+
 ## Available resources
 
 - `power-automate://status`
+- `power-automate://context`
 - `power-automate://last-run`
 - `power-automate://active-flow`
 

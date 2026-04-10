@@ -1,17 +1,15 @@
-import { promises as fs } from 'node:fs';
-
 import { createFlowReview } from './client-helpers.js';
 import { makeFlowKey } from './flow-key.js';
 import type { LastUpdate } from './schemas.js';
 import { lastUpdateSchema, normalizedFlowSchema, updateSummarySchema } from './schemas.js';
-import { getDataDir, getDataFilePath } from './runtime-paths.js';
+import { getDataFilePath } from './runtime-paths.js';
+import { readVersionedStore, writeVersionedStore } from './store-utils.js';
+
+const STORE_NAME = 'last-update';
+const STORE_VERSION = 1;
 
 let activeKey: string | null = null;
 let updatesByKey: Record<string, LastUpdate> = {};
-
-const ensureDataDir = async () => {
-  await fs.mkdir(getDataDir(), { recursive: true });
-};
 
 const normalizeStoredShape = (rawValue: unknown) => {
   const upgradeLegacyLastUpdate = (value: unknown) => {
@@ -81,36 +79,38 @@ export const getLastUpdateForFlow = ({ envId, flowId }: { envId: string; flowId:
   updatesByKey[makeFlowKey({ envId, flowId })] || null;
 
 export const loadLastUpdate = async () => {
-  await ensureDataDir();
+  const normalized = await readVersionedStore({
+    filePath: getDataFilePath('last-update.json'),
+    migrate: normalizeStoredShape,
+    name: STORE_NAME,
+    parse: normalizeStoredShape,
+    version: STORE_VERSION,
+  });
 
-  try {
-    const raw = await fs.readFile(getDataFilePath('last-update.json'), 'utf8');
-    const normalized = normalizeStoredShape(JSON.parse(raw));
-    activeKey = normalized.activeKey;
-    updatesByKey = normalized.records;
-    return getPersistedShape();
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException)?.code === 'ENOENT') {
-      activeKey = null;
-      updatesByKey = {};
-      return null;
-    }
-
+  if (!normalized) {
     activeKey = null;
     updatesByKey = {};
     return null;
   }
+
+  activeKey = normalized.activeKey;
+  updatesByKey = normalized.records;
+  return getPersistedShape();
 };
 
 export const saveLastUpdate = async (lastUpdate: LastUpdate) => {
   const parsed = lastUpdateSchema.parse(lastUpdate);
   const key = makeFlowKey(parsed);
-  await ensureDataDir();
   updatesByKey = {
     ...updatesByKey,
     [key]: parsed,
   };
   activeKey = key;
-  await fs.writeFile(getDataFilePath('last-update.json'), `${JSON.stringify(getPersistedShape(), null, 2)}\n`, 'utf8');
+  await writeVersionedStore({
+    data: getPersistedShape(),
+    filePath: getDataFilePath('last-update.json'),
+    name: STORE_NAME,
+    version: STORE_VERSION,
+  });
   return parsed;
 };

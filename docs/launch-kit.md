@@ -155,7 +155,7 @@ MCP: codex mcp add power-automate-local -- npx -y @kaael1/mcp-power-automate
 
 1. Show a Power Automate flow open in the browser
 2. Show the MCP install command
-3. Show `list_flows` and `set_active_flow`
+3. Show `list_flows` and `select_flow`
 4. Show a small flow update
 5. Show the extension `Review` workspace with the diff
 6. Show the revert path

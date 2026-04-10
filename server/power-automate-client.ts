@@ -1,4 +1,5 @@
 import { getActiveTarget, saveActiveTarget } from './active-target-store.js';
+import type { BridgeMode, CapabilityReasonCode, CapabilityStatus, ContextPayload, PowerAutomateContext } from './bridge-types.js';
 import {
   buildRequestUrl,
   createLastUpdateRecord,
@@ -26,15 +27,17 @@ import type {
   ListRunsInput,
   NormalizedFlow,
   RunSummary,
-  SelectionSource,
   Session,
+  TargetRef,
   TriggerCallbackInput,
   UpdateFlowInput,
   ValidateFlowInput,
   WaitForRunInput,
 } from './schemas.js';
 import { editorSchema } from './schemas.js';
+import { PowerAutomateSessionError } from './errors.js';
 import { getSession } from './session-store.js';
+import { getStoreDiagnostics } from './store-utils.js';
 import { getTokenAudit } from './token-audit-store.js';
 import { hasLegacyCompatibleToken } from './token-compat.js';
 import { getLastUpdate, getLastUpdateForFlow, saveLastUpdate } from './update-history-store.js';
@@ -55,8 +58,16 @@ interface PreferredLegacySession {
 type TargetSession = Session & {
   flowId: string;
   targetDisplayName: string | null;
-  targetSelectedAt: string;
-  targetSelectionSource: SelectionSource;
+  targetSelectedAt: string | null;
+  targetSelectionSource: string | null;
+};
+
+type ResolvedTarget = {
+  displayName: string | null;
+  envId: string;
+  flowId: string;
+  selectedAt: string | null;
+  selectionSource: string | null;
 };
 
 type RunActionSummary = {
@@ -69,20 +80,14 @@ type RunActionSummary = {
   type: string | null;
 };
 
-export class PowerAutomateSessionError extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = 'PowerAutomateSessionError';
-  }
-}
-
 const ensureSession = (): Session => {
   const session = getSession();
 
   if (!session) {
-    throw new PowerAutomateSessionError(
-      'No active browser session found. Open or refresh the target flow in Power Automate with the extension enabled.',
-    );
+    throw new PowerAutomateSessionError({
+      code: 'NO_SESSION',
+      message: 'No active browser session found. Open or refresh the target flow in Power Automate with the extension enabled.',
+    });
   }
 
   return session;
@@ -110,22 +115,68 @@ const getActiveOrTabTarget = (session: Session): ActiveTarget | null => {
   return createTabTargetFromSession(session);
 };
 
-const ensureTargetSession = (): TargetSession => {
-  const session = ensureSession();
-  const target = getActiveOrTabTarget(session);
+const resolveFlowDisplayName = ({
+  displayName,
+  envId,
+  flowId,
+}: {
+  displayName?: string | null;
+  envId: string;
+  flowId: string;
+}) => {
+  if (displayName) return displayName;
 
-  if (!target?.flowId) {
-    throw new PowerAutomateSessionError(
-      'No active flow target is selected. Use list_flows and set_active_flow, or capture the current tab as the active target first.',
-    );
+  const catalog = getFlowCatalogForEnv(envId);
+  const catalogMatch = catalog?.flows?.find((flow) => flow.flowId === flowId);
+  if (catalogMatch?.displayName) return catalogMatch.displayName;
+
+  const snapshot = getFlowSnapshotForFlow({ envId, flowId });
+  return snapshot?.displayName || snapshot?.flow?.definition?.metadata?.displayName || null;
+};
+
+const resolveTarget = (session: Session, target?: TargetRef): ResolvedTarget | null => {
+  if (target?.flowId) {
+    return {
+      displayName: resolveFlowDisplayName(target),
+      envId: target.envId,
+      flowId: target.flowId,
+      selectedAt: null,
+      selectionSource: 'direct-target',
+    };
+  }
+
+  const activeTarget = getActiveOrTabTarget(session);
+
+  if (!activeTarget?.flowId) return null;
+
+  return {
+    displayName: resolveFlowDisplayName(activeTarget),
+    envId: activeTarget.envId,
+    flowId: activeTarget.flowId,
+    selectedAt: activeTarget.selectedAt,
+    selectionSource: activeTarget.selectionSource,
+  };
+};
+
+const ensureTargetSession = (target?: TargetRef): TargetSession => {
+  const session = ensureSession();
+  const resolvedTarget = resolveTarget(session, target);
+
+  if (!resolvedTarget?.flowId) {
+    throw new PowerAutomateSessionError({
+      code: 'NO_TARGET',
+      message:
+        'No active flow target is selected. Use list_flows and select_flow, or capture the current tab as the active target first.',
+    });
   }
 
   return {
     ...session,
-    flowId: target.flowId,
-    targetDisplayName: target.displayName || null,
-    targetSelectedAt: target.selectedAt,
-    targetSelectionSource: target.selectionSource,
+    envId: resolvedTarget.envId,
+    flowId: resolvedTarget.flowId,
+    targetDisplayName: resolvedTarget.displayName || null,
+    targetSelectedAt: resolvedTarget.selectedAt,
+    targetSelectionSource: resolvedTarget.selectionSource,
   };
 };
 
@@ -143,9 +194,12 @@ const readResponseBody = async (response: Response): Promise<unknown> => {
 
 const toApiError = (response: Response, body: unknown) => {
   if (response.status === 401 || response.status === 403) {
-    return new PowerAutomateSessionError(
-      'The captured Power Automate session is expired or invalid. Reopen or refresh the flow in the browser to capture a fresh token.',
-    );
+    return new PowerAutomateSessionError({
+      code: 'SESSION_EXPIRED',
+      message:
+        'The captured Power Automate session is expired or invalid. Reopen or refresh the flow in the browser to capture a fresh token.',
+      retryable: true,
+    });
   }
 
   const parsedBody = body as AnyRecord | string | null;
@@ -307,34 +361,12 @@ const normalizeSnapshot = (snapshot: { displayName?: string; envId: string; flow
   source: snapshot.source,
 });
 
-const getDisplayNameFromSnapshot = (snapshot: { displayName?: string; flow?: { definition?: AnyRecord } } | null) =>
-  snapshot?.displayName || snapshot?.flow?.definition?.metadata?.displayName || null;
-
 const resolveCurrentTabFlowName = (session: Session) => {
   if (!session.flowId) return null;
-
-  const snapshot = getFlowSnapshotForFlow({ envId: session.envId, flowId: session.flowId }) || getFlowSnapshot();
-
-  if (snapshot?.flowId === session.flowId && snapshot?.envId === session.envId) {
-    return getDisplayNameFromSnapshot(snapshot);
-  }
-
-  const catalog = getFlowCatalogForEnv(session.envId);
-  return catalog?.flows?.find((flow) => flow.flowId === session.flowId)?.displayName || null;
-};
-
-const resolveTargetDisplayName = (session: Session) => {
-  const target = getActiveOrTabTarget(session);
-
-  if (!target?.flowId) return null;
-  if (target.displayName) return target.displayName;
-
-  const catalog = getFlowCatalogForEnv(target.envId);
-  const catalogMatch = catalog?.flows?.find((flow) => flow.flowId === target.flowId);
-  if (catalogMatch?.displayName) return catalogMatch.displayName;
-
-  const snapshot = getFlowSnapshotForFlow({ envId: target.envId, flowId: target.flowId });
-  return getDisplayNameFromSnapshot(snapshot);
+  return resolveFlowDisplayName({
+    envId: session.envId,
+    flowId: session.flowId,
+  });
 };
 
 const fetchRawFlowModern = async (session: Pick<TargetSession, 'apiToken' | 'apiUrl' | 'flowId'>, flowId = session.flowId) =>
@@ -350,9 +382,10 @@ const fetchRawFlowLegacy = async (session: Session & { envId: string; flowId: st
   const legacySession = getPreferredLegacySession(session);
 
   if (!legacySession) {
-    throw new PowerAutomateSessionError(
-      'No flow-compatible legacy token is available yet. Refresh the flow page again to capture a better token.',
-    );
+    throw new PowerAutomateSessionError({
+      code: 'LEGACY_TOKEN_MISSING',
+      message: 'No flow-compatible legacy token is available yet. Refresh the flow page again to capture a better token.',
+    });
   }
 
   return requestJson<AnyRecord>({
@@ -368,9 +401,10 @@ const queryLegacyFlows = async (session: Session, options: { filter?: string } =
   const legacySession = getPreferredLegacySession(session);
 
   if (!legacySession) {
-    throw new PowerAutomateSessionError(
-      'No flow-compatible legacy token is available yet. Refresh the flow page again to capture a better token.',
-    );
+    throw new PowerAutomateSessionError({
+      code: 'LEGACY_TOKEN_MISSING',
+      message: 'No flow-compatible legacy token is available yet. Refresh the flow page again to capture a better token.',
+    });
   }
 
   const resourcePath = getLegacyFlowsCollectionPath(session.envId);
@@ -456,8 +490,7 @@ const listFlowsLegacy = async (session: Session): Promise<FlowCatalog> => {
 export const getStatus = () => {
   const session = getSession();
   const legacySession = session ? getPreferredLegacySession(session) : null;
-  const activeTarget = session ? getActiveOrTabTarget(session) : null;
-  const targetDisplayName = session ? resolveTargetDisplayName(session) : null;
+  const activeTarget = session ? resolveTarget(session) : null;
   const currentTabFlowName = session ? resolveCurrentTabFlowName(session) : null;
 
   if (!session) {
@@ -471,7 +504,7 @@ export const getStatus = () => {
     activeTarget: activeTarget
       ? {
           ...activeTarget,
-          displayName: targetDisplayName,
+          displayName: activeTarget.displayName,
         }
       : null,
     capturedAt: session.capturedAt,
@@ -486,9 +519,7 @@ export const getStatus = () => {
   };
 };
 
-export const getCurrentFlow = async () => {
-  const session = ensureTargetSession();
-
+const fetchCurrentNormalizedFlow = async (session: TargetSession) => {
   try {
     const flowResponse = await fetchRawFlowModern(session);
     return normalizeFlow(session, flowResponse);
@@ -506,6 +537,29 @@ export const getCurrentFlow = async () => {
       throw legacyError;
     }
   }
+};
+
+const buildProposedFlow = ({
+  before,
+  displayName,
+  flow,
+}: {
+  before: NormalizedFlow;
+  displayName?: string;
+  flow: FlowContent;
+}): NormalizedFlow => ({
+  ...before,
+  displayName: displayName || before.displayName || '',
+  flow: {
+    $schema: before.flow.$schema || editorSchema,
+    connectionReferences: flow.connectionReferences,
+    definition: flow.definition,
+  },
+});
+
+export const getCurrentFlow = async ({ target }: { target?: TargetRef } = {}) => {
+  const session = ensureTargetSession(target);
+  return fetchCurrentNormalizedFlow(session);
 };
 
 export const refreshFlows = async () => {
@@ -538,16 +592,17 @@ export const setActiveFlow = async ({
   selectionSource = 'manual',
 }: {
   flowId: string;
-  selectionSource?: SelectionSource;
+  selectionSource?: 'clone-result' | 'create-result' | 'manual' | 'tab-capture';
 }) => {
   const session = ensureSession();
   const catalog = getFlowCatalogForEnv(session.envId) || (await listFlowsLegacy(session));
   const matchingFlow = catalog.flows.find((flow) => flow.flowId === flowId);
 
   if (!matchingFlow) {
-    throw new PowerAutomateSessionError(
-      `The flow ${flowId} was not found in the current environment catalog. Refresh flows and try again.`,
-    );
+    throw new PowerAutomateSessionError({
+      code: 'FLOW_NOT_FOUND',
+      message: `The flow ${flowId} was not found in the current environment catalog. Refresh flows and try again.`,
+    });
   }
 
   const target = await saveActiveTarget({
@@ -564,11 +619,16 @@ export const setActiveFlow = async ({
   };
 };
 
+export const selectFlow = (input: { flowId: string }) => setActiveFlow(input);
+
 export const setActiveFlowFromTab = async () => {
   const session = ensureSession();
 
   if (!session.flowId) {
-    throw new PowerAutomateSessionError('No flow is associated with the current browser tab yet.');
+    throw new PowerAutomateSessionError({
+      code: 'NO_TARGET',
+      message: 'No flow is associated with the current browser tab yet.',
+    });
   }
 
   if (!getFlowCatalogForEnv(session.envId)) {
@@ -581,9 +641,11 @@ export const setActiveFlowFromTab = async () => {
   });
 };
 
+export const selectTabFlow = () => setActiveFlowFromTab();
+
 export const getActiveFlow = async () => {
   const session = ensureSession();
-  const target = getActiveOrTabTarget(session);
+  const target = resolveTarget(session);
 
   if (!target) {
     return {
@@ -597,12 +659,33 @@ export const getActiveFlow = async () => {
   return {
     activeTarget: {
       ...target,
-      displayName: matchingFlow?.displayName || resolveTargetDisplayName(session),
+      displayName: matchingFlow?.displayName || target.displayName,
     },
     currentTab: {
       displayName: resolveCurrentTabFlowName(session),
       envId: session.envId,
       flowId: session.flowId || null,
+    },
+  };
+};
+
+const persistLastUpdate = async ({ after, before }: { after: NormalizedFlow; before: NormalizedFlow }) => {
+  const lastUpdate = createLastUpdateRecord({ after, before });
+  await saveLastUpdate(lastUpdate);
+  return lastUpdate;
+};
+
+export const previewFlowUpdate = async ({ displayName, flow, target }: UpdateFlowInput) => {
+  const session = ensureTargetSession(target);
+  const before = await fetchCurrentNormalizedFlow(session);
+  const after = buildProposedFlow({ before, displayName, flow });
+
+  return {
+    lastUpdate: createLastUpdateRecord({ after, before }),
+    target: {
+      displayName: session.targetDisplayName,
+      envId: session.envId,
+      flowId: session.flowId,
     },
   };
 };
@@ -633,17 +716,21 @@ const updateCurrentFlowModern = async (session: TargetSession, { displayName, fl
   });
 
   const after = normalizeFlow(session, updatedFlow);
-  await saveLastUpdate(createLastUpdateRecord({ after, before }));
-  return after;
+  const lastUpdate = await persistLastUpdate({ after, before });
+  return {
+    flow: after,
+    lastUpdate,
+  };
 };
 
 const updateCurrentFlowLegacy = async (session: TargetSession, { displayName, flow }: UpdateFlowInput) => {
   const legacySession = getPreferredLegacySession(session);
 
   if (!legacySession) {
-    throw new PowerAutomateSessionError(
-      'No flow-compatible legacy token is available yet. Refresh the flow page again to capture a better token.',
-    );
+    throw new PowerAutomateSessionError({
+      code: 'LEGACY_TOKEN_MISSING',
+      message: 'No flow-compatible legacy token is available yet. Refresh the flow page again to capture a better token.',
+    });
   }
 
   const before = normalizeLegacyFlow(session, await fetchRawFlowLegacy(session));
@@ -671,18 +758,26 @@ const updateCurrentFlowLegacy = async (session: TargetSession, { displayName, fl
   });
 
   const after = normalizeLegacyFlow(session, updatedFlow);
-  await saveLastUpdate(createLastUpdateRecord({ after, before }));
-  return after;
+  const lastUpdate = await persistLastUpdate({ after, before });
+  return {
+    flow: after,
+    lastUpdate,
+  };
 };
 
-export const updateCurrentFlow = async ({ displayName, flow }: UpdateFlowInput) => {
-  const session = ensureTargetSession();
+export const applyFlowUpdate = async ({ displayName, flow, target }: UpdateFlowInput) => {
+  const session = ensureTargetSession(target);
 
   try {
     return await updateCurrentFlowModern(session, { displayName, flow });
   } catch {
     return updateCurrentFlowLegacy(session, { displayName, flow });
   }
+};
+
+export const updateCurrentFlow = async (input: UpdateFlowInput) => {
+  const result = await applyFlowUpdate(input);
+  return result.flow;
 };
 
 const buildBlankRequestDefinition = () => ({
@@ -756,9 +851,10 @@ const createFlowLegacy = async (session: Session, { displayName, flow }: { displ
   const legacySession = getPreferredLegacySession(session);
 
   if (!legacySession) {
-    throw new PowerAutomateSessionError(
-      'No flow-compatible legacy token is available yet. Refresh the flow page again to capture a better token.',
-    );
+    throw new PowerAutomateSessionError({
+      code: 'LEGACY_TOKEN_MISSING',
+      message: 'No flow-compatible legacy token is available yet. Refresh the flow page again to capture a better token.',
+    });
   }
 
   const createdFlow = await requestJson<AnyRecord>({
@@ -866,23 +962,169 @@ export const getLastUpdateSummary = (): LastUpdate | null => {
   return target ? getLastUpdateForFlow(target) || getLastUpdate() : getLastUpdate();
 };
 
-export const revertLastUpdate = async () => {
-  const session = ensureTargetSession();
+const createCapabilityStatus = ({
+  available,
+  reason,
+  reasonCode,
+}: {
+  available: boolean;
+  reason?: string | null;
+  reasonCode?: CapabilityReasonCode | null;
+}): CapabilityStatus => ({
+  available,
+  reason: available ? null : (reason ?? null),
+  reasonCode: available ? null : (reasonCode ?? null),
+});
+
+export const getLastRunSummary = (): LastRun | null => {
+  const session = getSession();
+
+  if (!session) {
+    return getLastRun();
+  }
+
+  const target = getActiveOrTabTarget(session);
+  return target ? getLastRunForFlow(target) || getLastRun() : getLastRun();
+};
+
+export const getContext = ({ bridgeMode = 'owned' }: { bridgeMode?: BridgeMode } = {}): PowerAutomateContext => {
+  const session = getSession();
+  const legacySession = session ? getPreferredLegacySession(session) : null;
+  const resolvedTarget = session ? resolveTarget(session) : null;
+  const activeTarget =
+    session && getActiveTarget()?.envId === session.envId ? getActiveTarget() : null;
+  const currentTab =
+    session ?
+      {
+        displayName: resolveCurrentTabFlowName(session),
+        envId: session.envId,
+        flowId: session.flowId || null,
+      }
+    : null;
+  const storeHealthItems = getStoreDiagnostics();
+  const hasStoreCorruption = storeHealthItems.some((item) => item.state === 'corrupted');
+
+  const noSessionReason = hasStoreCorruption ? 'One or more local state files are corrupted. Reopen the flow or clear local state.' : 'Open or refresh a Power Automate flow so the extension can capture a session.';
+  const noSessionCode: CapabilityReasonCode = hasStoreCorruption ? 'STORE_CORRUPTED' : 'NO_SESSION';
+  const noTargetReason = 'Select a flow or sync the current browser tab before running target-specific actions.';
+
+  return {
+    capabilities: {
+      canReadFlow: createCapabilityStatus(
+        session && resolvedTarget ?
+          { available: true }
+        : { available: false, reason: !session ? noSessionReason : noTargetReason, reasonCode: !session ? noSessionCode : 'NO_TARGET' },
+      ),
+      canReadFlows: createCapabilityStatus(
+        session ?
+          { available: true }
+        : { available: false, reason: noSessionReason, reasonCode: noSessionCode },
+      ),
+      canReadRuns: createCapabilityStatus(
+        session && resolvedTarget && legacySession ?
+          { available: true }
+        : {
+            available: false,
+            reason:
+              !session ? noSessionReason
+              : !resolvedTarget ? noTargetReason
+              : 'Refresh the flow page again to capture a legacy-compatible token before inspecting runs.',
+            reasonCode:
+              !session ? noSessionCode
+              : !resolvedTarget ? 'NO_TARGET'
+              : 'LEGACY_TOKEN_MISSING',
+          },
+      ),
+      canUpdateFlow: createCapabilityStatus(
+        session && resolvedTarget ?
+          { available: true }
+        : { available: false, reason: !session ? noSessionReason : noTargetReason, reasonCode: !session ? noSessionCode : 'NO_TARGET' },
+      ),
+      canUseLegacyApi: createCapabilityStatus(
+        session && legacySession ?
+          { available: true }
+        : {
+            available: false,
+            reason: !session ? noSessionReason : 'Refresh the flow page again to capture a legacy-compatible token.',
+            reasonCode: !session ? noSessionCode : 'LEGACY_TOKEN_MISSING',
+          },
+      ),
+      canValidateFlow: createCapabilityStatus(
+        session && resolvedTarget && legacySession ?
+          { available: true }
+        : {
+            available: false,
+            reason:
+              !session ? noSessionReason
+              : !resolvedTarget ? noTargetReason
+              : 'Refresh the flow page again to capture a legacy-compatible token before validating.',
+            reasonCode:
+              !session ? noSessionCode
+              : !resolvedTarget ? 'NO_TARGET'
+              : 'LEGACY_TOKEN_MISSING',
+          },
+      ),
+    },
+    diagnostics: {
+      bridgeMode,
+      envId: session?.envId || resolvedTarget?.envId || null,
+      lastRunCapturedAt: getLastRunSummary()?.capturedAt || null,
+      lastUpdateCapturedAt: getLastUpdateSummary()?.capturedAt || null,
+      legacySource: legacySession?.source || null,
+      snapshotCapturedAt: getFlowSnapshot()?.capturedAt || null,
+      storeHealth: {
+        items: storeHealthItems,
+        ok: !hasStoreCorruption,
+      },
+      tokenAuditCapturedAt: getTokenAudit()?.capturedAt || null,
+    },
+    selection: {
+      activeTarget: activeTarget ? { ...activeTarget, displayName: resolveFlowDisplayName(activeTarget) } : null,
+      currentTab,
+      resolvedTarget,
+    },
+    session: {
+      capturedAt: session?.capturedAt || null,
+      connected: Boolean(session),
+      envId: session?.envId || null,
+      flowId: session?.flowId || null,
+      portalUrl: session?.portalUrl || null,
+    },
+  };
+};
+
+export const getContextPayload = ({ bridgeMode = 'owned' }: { bridgeMode?: BridgeMode } = {}): ContextPayload => ({
+  context: getContext({ bridgeMode }),
+  lastRun: getLastRunSummary(),
+  lastUpdate: getLastUpdateSummary(),
+  ok: true,
+});
+
+export const revertLastUpdate = async ({ target }: { target?: TargetRef } = {}) => {
+  const session = ensureTargetSession(target);
   const lastUpdate = getLastUpdateForFlow(session) || getLastUpdate();
 
   if (!lastUpdate) {
-    throw new PowerAutomateSessionError('No previous update is available to revert.');
+    throw new PowerAutomateSessionError({
+      code: 'NO_TARGET',
+      message: 'No previous update is available to revert.',
+    });
   }
 
   if (lastUpdate.flowId !== session.flowId || lastUpdate.envId !== session.envId) {
-    throw new PowerAutomateSessionError(
-      'The active flow does not match the last updated flow. Open the same flow before reverting.',
-    );
+    throw new PowerAutomateSessionError({
+      code: 'TARGET_MISMATCH',
+      message: 'The active flow does not match the last updated flow. Open the same flow before reverting.',
+    });
   }
 
-  return updateCurrentFlow({
+  return applyFlowUpdate({
     displayName: lastUpdate.before.displayName,
     flow: lastUpdate.before.flow,
+    target: {
+      envId: session.envId,
+      flowId: session.flowId,
+    },
   });
 };
 
@@ -939,9 +1181,10 @@ const listRunsLegacy = async (session: TargetSession, { limit = 10 }: ListRunsIn
   const legacySession = getPreferredLegacySession(session);
 
   if (!legacySession) {
-    throw new PowerAutomateSessionError(
-      'No flow-compatible legacy token is available yet. Refresh the flow page again to capture a better token.',
-    );
+    throw new PowerAutomateSessionError({
+      code: 'LEGACY_TOKEN_MISSING',
+      message: 'No flow-compatible legacy token is available yet. Refresh the flow page again to capture a better token.',
+    });
   }
 
   const response = await requestJson<AnyRecord>({
@@ -964,9 +1207,10 @@ const getRunLegacy = async (session: TargetSession, runId: string) => {
   const legacySession = getPreferredLegacySession(session);
 
   if (!legacySession) {
-    throw new PowerAutomateSessionError(
-      'No flow-compatible legacy token is available yet. Refresh the flow page again to capture a better token.',
-    );
+    throw new PowerAutomateSessionError({
+      code: 'LEGACY_TOKEN_MISSING',
+      message: 'No flow-compatible legacy token is available yet. Refresh the flow page again to capture a better token.',
+    });
   }
 
   const run = await requestJson<AnyRecord>({
@@ -987,9 +1231,10 @@ const getRunActionsLegacy = async (session: TargetSession, runId: string) => {
   const legacySession = getPreferredLegacySession(session);
 
   if (!legacySession) {
-    throw new PowerAutomateSessionError(
-      'No flow-compatible legacy token is available yet. Refresh the flow page again to capture a better token.',
-    );
+    throw new PowerAutomateSessionError({
+      code: 'LEGACY_TOKEN_MISSING',
+      message: 'No flow-compatible legacy token is available yet. Refresh the flow page again to capture a better token.',
+    });
   }
 
   const response = await requestJson<AnyRecord>({
@@ -1008,20 +1253,23 @@ const getRunActionsLegacy = async (session: TargetSession, runId: string) => {
   };
 };
 
-const getCurrentTriggerName = async () => {
-  const flow = await getCurrentFlow();
+const getCurrentTriggerName = async (target?: TargetRef) => {
+  const flow = await getCurrentFlow({ target });
   const triggerNames = Object.keys(flow.flow.definition.triggers || {});
   const triggerName = triggerNames[0] || null;
 
   if (!triggerName) {
-    throw new PowerAutomateSessionError('No trigger was found in the current flow definition.');
+    throw new PowerAutomateSessionError({
+      code: 'TRIGGER_NOT_FOUND',
+      message: 'No trigger was found in the current flow definition.',
+    });
   }
 
   return triggerName;
 };
 
-export const validateCurrentFlow = async ({ flow }: ValidateFlowInput) => {
-  const session = ensureTargetSession();
+export const validateCurrentFlow = async ({ flow, target }: ValidateFlowInput) => {
+  const session = ensureTargetSession(target);
   const legacySession = getPreferredLegacySession(session);
 
   if (!legacySession) {
@@ -1066,13 +1314,13 @@ export const validateCurrentFlow = async ({ flow }: ValidateFlowInput) => {
   };
 };
 
-export const listRuns = async ({ limit = 10 }: ListRunsInput = {}) => {
-  const session = ensureTargetSession();
+export const listRuns = async ({ limit = 10, target }: ListRunsInput = {}) => {
+  const session = ensureTargetSession(target);
   return listRunsLegacy(session, { limit });
 };
 
-export const getRun = async ({ runId }: { runId: string }) => {
-  const session = ensureTargetSession();
+export const getRun = async ({ runId, target }: { runId: string; target?: TargetRef }) => {
+  const session = ensureTargetSession(target);
   const [{ actions, source }, { run }] = await Promise.all([
     getRunActionsLegacy(session, runId),
     getRunLegacy(session, runId),
@@ -1084,18 +1332,24 @@ export const getRun = async ({ runId }: { runId: string }) => {
   };
 };
 
-export const getRunActions = async ({ runId }: { runId: string }) => {
-  const session = ensureTargetSession();
+export const getRunActions = async ({ runId, target }: { runId: string; target?: TargetRef }) => {
+  const session = ensureTargetSession(target);
   return getRunActionsLegacy(session, runId);
 };
 
-export const getLatestRun = async () => {
-  const session = ensureTargetSession();
+export const getLatestRun = async ({ target }: { target?: TargetRef } = {}) => {
+  const session = ensureTargetSession(target);
   const { runs, source } = await listRunsLegacy(session, { limit: 1 });
   let run = runs[0] || null;
 
   if (run?.runId) {
-    const detail = await getRun({ runId: run.runId });
+    const detail = await getRun({
+      runId: run.runId,
+      target: {
+        envId: session.envId,
+        flowId: session.flowId,
+      },
+    });
     run = detail.run;
   }
 
@@ -1105,9 +1359,14 @@ export const getLatestRun = async () => {
   };
 };
 
-export const refreshLatestRun = async (): Promise<LastRun> => {
-  const session = ensureTargetSession();
-  const latest = await getLatestRun();
+export const refreshLatestRun = async ({ target }: { target?: TargetRef } = {}): Promise<LastRun> => {
+  const session = ensureTargetSession(target);
+  const latest = await getLatestRun({
+    target: {
+      envId: session.envId,
+      flowId: session.flowId,
+    },
+  });
 
   const payload: LastRun = {
     capturedAt: new Date().toISOString(),
@@ -1120,29 +1379,24 @@ export const refreshLatestRun = async (): Promise<LastRun> => {
   return payload;
 };
 
-export const getLastRunSummary = (): LastRun | null => {
-  const session = getSession();
-
-  if (!session) {
-    return getLastRun();
-  }
-
-  const target = getActiveOrTabTarget(session);
-  return target ? getLastRunForFlow(target) || getLastRun() : getLastRun();
-};
-
 export const waitForRun = async ({
   pollIntervalSeconds = 5,
   runId,
+  target,
   timeoutSeconds = 60,
 }: WaitForRunInput = {}) => {
-  const session = ensureTargetSession();
+  const session = ensureTargetSession(target);
   const deadline = Date.now() + timeoutSeconds * 1000;
   let targetRunId = runId || null;
 
   while (Date.now() <= deadline) {
     if (!targetRunId) {
-      const latest = await getLatestRun();
+      const latest = await getLatestRun({
+        target: {
+          envId: session.envId,
+          flowId: session.flowId,
+        },
+      });
       targetRunId = latest.run?.runId || null;
 
       if (!targetRunId) {
@@ -1151,7 +1405,13 @@ export const waitForRun = async ({
       }
     }
 
-    const detail = await getRun({ runId: targetRunId });
+    const detail = await getRun({
+      runId: targetRunId,
+      target: {
+        envId: session.envId,
+        flowId: session.flowId,
+      },
+    });
     const status = (detail.run?.status || '').toLowerCase();
 
     if (TERMINAL_RUN_STATUSES.has(status)) {
@@ -1178,17 +1438,18 @@ export const waitForRun = async ({
   };
 };
 
-export const getTriggerCallbackUrl = async ({ triggerName }: TriggerCallbackInput = {}) => {
-  const session = ensureTargetSession();
+export const getTriggerCallbackUrl = async ({ triggerName, target }: TriggerCallbackInput = {}) => {
+  const session = ensureTargetSession(target);
   const legacySession = getPreferredLegacySession(session);
 
   if (!legacySession) {
-    throw new PowerAutomateSessionError(
-      'No flow-compatible legacy token is available yet. Refresh the flow page again to capture a better token.',
-    );
+    throw new PowerAutomateSessionError({
+      code: 'LEGACY_TOKEN_MISSING',
+      message: 'No flow-compatible legacy token is available yet. Refresh the flow page again to capture a better token.',
+    });
   }
 
-  const effectiveTriggerName = triggerName || (await getCurrentTriggerName());
+  const effectiveTriggerName = triggerName || (await getCurrentTriggerName(target));
   const response = await requestJson<AnyRecord>({
     apiVersion: LEGACY_API_VERSION,
     baseUrl: legacySession.baseUrl,
@@ -1210,11 +1471,22 @@ export const getTriggerCallbackUrl = async ({ triggerName }: TriggerCallbackInpu
   };
 };
 
-export const invokeTrigger = async ({ body = {}, triggerName }: { body?: unknown; triggerName?: string } = {}) => {
-  const callback = await getTriggerCallbackUrl({ triggerName });
+export const invokeTrigger = async ({
+  body = {},
+  target,
+  triggerName,
+}: {
+  body?: unknown;
+  target?: TargetRef;
+  triggerName?: string;
+} = {}) => {
+  const callback = await getTriggerCallbackUrl({ target, triggerName });
 
   if (!callback.url) {
-    throw new PowerAutomateSessionError('The trigger callback URL is missing or invalid.');
+    throw new PowerAutomateSessionError({
+      code: 'CALLBACK_URL_MISSING',
+      message: 'The trigger callback URL is missing or invalid.',
+    });
   }
 
   const response = await fetch(callback.url, {

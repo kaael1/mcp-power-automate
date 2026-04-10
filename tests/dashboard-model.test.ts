@@ -53,6 +53,7 @@ const basePayload: DashboardPayload = {
       hasSession: true,
       ok: true,
     },
+    context: null,
     lastError: null,
     lastRun: {
       capturedAt: '2026-04-01T10:03:00.000Z',
@@ -326,5 +327,79 @@ describe('dashboard model', () => {
     expect(model.hasLegacyApi).toBe(true);
     expect(model.statusLabel).toBe('Connected');
     expect(model.attentionItems.some((item) => item.id === 'legacy-missing')).toBe(false);
+  });
+
+  it('prefers centralized context capabilities when present', () => {
+    const model = deriveDashboardModel({
+      ...basePayload,
+      status: {
+        ...basePayload.status,
+        bridge: {
+          ...basePayload.status.bridge,
+          hasLegacyApi: false,
+          hasSession: false,
+        },
+        context: {
+          context: {
+            capabilities: {
+              canReadFlow: { available: true, reason: null, reasonCode: null },
+              canReadFlows: { available: true, reason: null, reasonCode: null },
+              canReadRuns: { available: true, reason: null, reasonCode: null },
+              canUpdateFlow: { available: true, reason: null, reasonCode: null },
+              canUseLegacyApi: { available: true, reason: null, reasonCode: null },
+              canValidateFlow: { available: true, reason: null, reasonCode: null },
+            },
+            diagnostics: {
+              bridgeMode: 'owned',
+              envId: 'Default-123',
+              lastRunCapturedAt: null,
+              lastUpdateCapturedAt: null,
+              legacySource: 'captured-modern-session',
+              snapshotCapturedAt: null,
+              storeHealth: {
+                items: [],
+                ok: true,
+              },
+              tokenAuditCapturedAt: null,
+            },
+            selection: {
+              activeTarget: {
+                displayName: 'Flow A',
+                envId: 'Default-123',
+                flowId: 'flow-a',
+                selectedAt: '2026-04-01T10:01:00.000Z',
+                selectionSource: 'manual',
+              },
+              currentTab: {
+                displayName: 'Flow A',
+                envId: 'Default-123',
+                flowId: 'flow-a',
+              },
+              resolvedTarget: {
+                displayName: 'Flow A',
+                envId: 'Default-123',
+                flowId: 'flow-a',
+                selectedAt: '2026-04-01T10:01:00.000Z',
+                selectionSource: 'manual',
+              },
+            },
+            session: {
+              capturedAt: '2026-04-01T10:02:00.000Z',
+              connected: true,
+              envId: 'Default-123',
+              flowId: 'flow-a',
+              portalUrl: 'https://make.powerautomate.com',
+            },
+          },
+          lastRun: basePayload.status.lastRun,
+          lastUpdate: null,
+          ok: true,
+        },
+      },
+    });
+
+    expect(model.hasSession).toBe(true);
+    expect(model.hasLegacyApi).toBe(true);
+    expect(model.statusLabel).toBe('Connected');
   });
 });

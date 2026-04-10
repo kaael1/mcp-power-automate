@@ -9,6 +9,7 @@ export const STORAGE_KEYS = {
   flowCatalog: 'mcpPowerAutomate.flowCatalog',
   lastError: 'mcpPowerAutomate.lastError',
   lastHealth: 'mcpPowerAutomate.lastHealth',
+  lastContext: 'mcpPowerAutomate.lastContext',
   lastRun: 'mcpPowerAutomate.lastRun',
   lastUpdate: 'mcpPowerAutomate.lastUpdate',
   lastSentAt: 'mcpPowerAutomate.lastSentAt',

@@ -1,16 +1,14 @@
-import { promises as fs } from 'node:fs';
-
 import { makeFlowKey } from './flow-key.js';
 import type { LastRun } from './schemas.js';
 import { lastRunSchema } from './schemas.js';
-import { getDataDir, getDataFilePath } from './runtime-paths.js';
+import { getDataFilePath } from './runtime-paths.js';
+import { readVersionedStore, writeVersionedStore } from './store-utils.js';
+
+const STORE_NAME = 'last-run';
+const STORE_VERSION = 1;
 
 let activeKey: string | null = null;
 let lastRunsByKey: Record<string, LastRun> = {};
-
-const ensureDataDir = async () => {
-  await fs.mkdir(getDataDir(), { recursive: true });
-};
 
 const normalizeStoredShape = (rawValue: unknown) => {
   const recordsSource = (rawValue as { records?: Record<string, unknown> } | null | undefined)?.records;
@@ -52,36 +50,38 @@ export const getLastRunForFlow = ({ envId, flowId }: { envId: string; flowId: st
   lastRunsByKey[makeFlowKey({ envId, flowId })] || null;
 
 export const loadLastRun = async () => {
-  await ensureDataDir();
+  const normalized = await readVersionedStore({
+    filePath: getDataFilePath('last-run.json'),
+    migrate: normalizeStoredShape,
+    name: STORE_NAME,
+    parse: normalizeStoredShape,
+    version: STORE_VERSION,
+  });
 
-  try {
-    const raw = await fs.readFile(getDataFilePath('last-run.json'), 'utf8');
-    const normalized = normalizeStoredShape(JSON.parse(raw));
-    activeKey = normalized.activeKey;
-    lastRunsByKey = normalized.records;
-    return getPersistedShape();
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException)?.code === 'ENOENT') {
-      activeKey = null;
-      lastRunsByKey = {};
-      return null;
-    }
-
+  if (!normalized) {
     activeKey = null;
     lastRunsByKey = {};
     return null;
   }
+
+  activeKey = normalized.activeKey;
+  lastRunsByKey = normalized.records;
+  return getPersistedShape();
 };
 
 export const saveLastRun = async (lastRun: LastRun) => {
   const parsed = lastRunSchema.parse(lastRun);
   const key = makeFlowKey(parsed);
-  await ensureDataDir();
   lastRunsByKey = {
     ...lastRunsByKey,
     [key]: parsed,
   };
   activeKey = key;
-  await fs.writeFile(getDataFilePath('last-run.json'), `${JSON.stringify(getPersistedShape(), null, 2)}\n`, 'utf8');
+  await writeVersionedStore({
+    data: getPersistedShape(),
+    filePath: getDataFilePath('last-run.json'),
+    name: STORE_NAME,
+    version: STORE_VERSION,
+  });
   return parsed;
 };

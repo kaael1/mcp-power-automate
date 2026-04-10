@@ -62,6 +62,7 @@ const buildPayload = (): DashboardPayload => ({
       hasSession: true,
       ok: true,
     },
+    context: null,
     lastError: null,
     lastRun: {
       capturedAt: '2026-04-01T10:03:00.000Z',
