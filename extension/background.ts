@@ -1,6 +1,6 @@
 import type { PopupStatusPayload, PopupTokenMeta } from '../server/bridge-types.js';
 import type { FlowSnapshot, LastRun, LastUpdate, Session, TokenAudit } from '../server/schemas.js';
-import { scoreToken } from './token-utils.js';
+import { decodeJwtPayload, scoreToken } from './token-utils.js';
 import { buildBaseUrl, extractAuthorization, extractFromApiUrl, extractFromPortalUrl } from './url-utils.js';
 import {
   BRIDGE_URL,
@@ -18,6 +18,12 @@ const state: BackgroundState = {
   lastSentSignature: null,
   tabs: {},
 };
+
+const LEGACY_FLOW_BASE_URL = 'https://api.flow.microsoft.com/';
+
+const isLegacyCompatibleAudience = (audience: string | undefined) =>
+  audience === 'https://service.flow.microsoft.com/' ||
+  audience === 'https://service.powerapps.com/';
 
 const getTabState = (tabId: number) => {
   if (!state.tabs[tabId]) {
@@ -660,10 +666,16 @@ chrome.runtime.onMessage.addListener((message: RuntimeMessage, sender, sendRespo
 
     if (typeof targetTabId === 'number') {
       const tabState = getTabState(targetTabId);
+      const payload = decodeJwtPayload(message.token.replace(/^Bearer\s+/i, ''));
       const portalData = extractFromPortalUrl(sender?.tab?.url || '');
       if (portalData?.envId) tabState.envId = portalData.envId;
       if (portalData?.flowId) tabState.flowId = portalData.flowId;
       if (sender?.tab?.url) tabState.portalUrl = sender.tab.url;
+
+      if (isLegacyCompatibleAudience(payload?.aud)) {
+        tabState.legacyApiUrl = LEGACY_FLOW_BASE_URL;
+        tabState.legacyToken = message.token;
+      }
 
       void maybePromoteApiToken(tabState, message.token, message.source || 'msal-silent').then(() => {
         if (tabState.apiUrl && tabState.envId && tabState.flowId) {

@@ -36,6 +36,7 @@ import type {
 import { editorSchema } from './schemas.js';
 import { getSession } from './session-store.js';
 import { getTokenAudit } from './token-audit-store.js';
+import { hasLegacyCompatibleToken } from './token-compat.js';
 import { getLastUpdate, getLastUpdateForFlow, saveLastUpdate } from './update-history-store.js';
 
 const MODERN_API_VERSION = '1';
@@ -204,6 +205,14 @@ const getPreferredLegacySession = (session: Session): PreferredLegacySession | n
       baseUrl: session.legacyApiUrl,
       source: 'captured-legacy-session',
       token: session.legacyToken,
+    };
+  }
+
+  if (hasLegacyCompatibleToken(session.apiToken)) {
+    return {
+      baseUrl: LEGACY_FLOW_BASE_URL,
+      source: 'captured-modern-session',
+      token: session.apiToken,
     };
   }
 

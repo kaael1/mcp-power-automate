@@ -3,7 +3,7 @@
   "version": "0.4.1",
   "private": false,
   "type": "module",
-  "description": "Local MCP server for Microsoft Power Automate with browser-backed auth, explicit flow targeting, validation, review diff, and rollback.",
+  "description": "Local MCP server and reusable skill bundle for Microsoft Power Automate with browser-backed auth, explicit flow targeting, validation, review diff, and rollback.",
   "mcpName": "io.github.kaael1/mcp-power-automate",
   "bin": {
     "mcp-power-automate": "dist/server/index.js"
@@ -50,13 +50,17 @@
     "claude-code",
     "codex",
     "codex-skill",
+    "cursor",
     "flow",
+    "lobehub",
     "mcp",
     "microsoft-flow",
     "microsoft-power-automate",
     "model-context-protocol",
+    "openclaw",
     "power-platform",
     "power-automate",
+    "skill-bundle",
     "skills",
     "workflow-automation"
   ],

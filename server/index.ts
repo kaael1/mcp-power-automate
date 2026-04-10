@@ -33,6 +33,7 @@ import { getLastRun, loadLastRun } from './last-run-store.js';
 import { bridgeHost, bridgePort, flowIdSchema, flowSnapshotSchema, sessionSchema, tokenAuditSchema } from './schemas.js';
 import { getSession, loadSession, saveSession } from './session-store.js';
 import { getTokenAudit, loadTokenAudit, saveTokenAudit } from './token-audit-store.js';
+import { hasLegacyCompatibleToken } from './token-compat.js';
 import { createMcpApp } from './tools.js';
 import { getLastUpdate, loadLastUpdate } from './update-history-store.js';
 
@@ -77,6 +78,13 @@ const hasLegacyTokenAuditCandidate = () => {
   );
 };
 
+const hasLegacyCompatibleAccess = (session = getSession()) =>
+  Boolean(
+    (session?.legacyApiUrl && session?.legacyToken) ||
+      hasLegacyCompatibleToken(session?.apiToken) ||
+      hasLegacyTokenAuditCandidate(),
+  );
+
 export const createHealthPayload = (): HealthPayload => {
   const session = getSession();
   const lastRun = getLastRun();
@@ -91,7 +99,7 @@ export const createHealthPayload = (): HealthPayload => {
     bridgeMode: ownsBridgeServer ? 'owned' : 'reused',
     currentTabFlowId: session?.flowId || null,
     envId: session?.envId || activeTarget?.envId || null,
-    hasLegacyApi: Boolean(session?.legacyApiUrl && session?.legacyToken) || hasLegacyTokenAuditCandidate(),
+    hasLegacyApi: hasLegacyCompatibleAccess(session),
     hasLastUpdate: Boolean(lastUpdate),
     hasLastRun: Boolean(lastRun?.run),
     hasSnapshot: Boolean(snapshot),
@@ -161,7 +169,7 @@ export const createBridgeServer = () =>
           capturedAt: savedSession.capturedAt,
           envId: savedSession.envId,
           flowId: savedSession.flowId,
-          hasLegacyApi: Boolean(savedSession.legacyApiUrl && savedSession.legacyToken),
+          hasLegacyApi: hasLegacyCompatibleAccess(savedSession),
           ok: true,
         } satisfies SessionCaptureResponse);
         return;

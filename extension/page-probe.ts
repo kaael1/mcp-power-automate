@@ -1,17 +1,43 @@
 import { BRIDGE_SIGNAL, type RuntimeMessage } from './types.js';
 
+type ProbeState = {
+  fetchPatched: boolean;
+  initialized: boolean;
+  seenMsalTokens: Set<string>;
+  seenPayloads: Set<string>;
+  xhrPatched: boolean;
+};
+
 (() => {
+  const globalWindow = window as Window & {
+    __paMcpPageProbeState?: ProbeState;
+  };
   const TARGET_SCOPES = [
     ['https://api.powerplatform.com/PowerAutomate.Flow.Read', 'https://api.powerplatform.com/PowerAutomate.Flow.Write'],
     ['https://api.powerplatform.com/PowerAutomate.Flow.Write'],
     ['https://api.powerplatform.com/PowerAutomate.Flow.Read'],
   ];
-  const flowIdMatch = window.location.href.match(/flows\/(?:shared\/)?([0-9a-f-]{36})/i);
-  const envIdMatch = window.location.href.match(/environments\/([a-zA-Z0-9-]+)/i);
-  const currentFlowId = flowIdMatch?.[1] || null;
-  const currentEnvId = envIdMatch?.[1] || null;
-  const seenPayloads = new Set<string>();
-  const seenMsalTokens = new Set<string>();
+  const probeState =
+    globalWindow.__paMcpPageProbeState ||
+    (globalWindow.__paMcpPageProbeState = {
+      fetchPatched: false,
+      initialized: false,
+      seenMsalTokens: new Set<string>(),
+      seenPayloads: new Set<string>(),
+      xhrPatched: false,
+    });
+  const seenPayloads = probeState.seenPayloads;
+  const seenMsalTokens = probeState.seenMsalTokens;
+
+  const getCurrentContext = () => {
+    const flowIdMatch = window.location.href.match(/flows\/(?:shared\/)?([0-9a-f-]{36})/i);
+    const envIdMatch = window.location.href.match(/environments\/([a-zA-Z0-9-]+)/i);
+
+    return {
+      envId: envIdMatch?.[1] || null,
+      flowId: flowIdMatch?.[1] || null,
+    };
+  };
 
   interface MsalResult {
     accessToken?: string;
@@ -25,18 +51,17 @@ import { BRIDGE_SIGNAL, type RuntimeMessage } from './types.js';
 
   const postSnapshot = (payload: {
     displayName?: string;
-    envId: string | null;
     flow: { connectionReferences: Record<string, unknown>; definition: Record<string, unknown> };
-    flowId: string | null;
     source: string;
   }) => {
-    if (!payload?.flow?.definition || !payload?.flow?.connectionReferences || !payload.envId || !payload.flowId) return;
+    const context = getCurrentContext();
+    if (!payload?.flow?.definition || !payload?.flow?.connectionReferences || !context.envId || !context.flowId) return;
 
     const signature = JSON.stringify({
       actions: Object.keys(payload.flow.definition.actions || {}),
       displayName: payload.displayName || '',
-      envId: payload.envId,
-      flowId: payload.flowId,
+      envId: context.envId,
+      flowId: context.flowId,
       source: payload.source,
       triggers: Object.keys(payload.flow.definition.triggers || {}),
     });
@@ -48,8 +73,8 @@ import { BRIDGE_SIGNAL, type RuntimeMessage } from './types.js';
       {
         payload: {
           ...payload,
-          envId: payload.envId,
-          flowId: payload.flowId,
+          envId: context.envId,
+          flowId: context.flowId,
           capturedAt: new Date().toISOString(),
         },
         source: BRIDGE_SIGNAL,
@@ -68,12 +93,10 @@ import { BRIDGE_SIGNAL, type RuntimeMessage } from './types.js';
     if (anyCandidate.definition && anyCandidate.connectionReferences) {
       return {
         displayName: anyCandidate.displayName || anyCandidate.name || '',
-        envId: currentEnvId,
         flow: {
           connectionReferences: anyCandidate.connectionReferences,
           definition: anyCandidate.definition,
         },
-        flowId: currentFlowId,
         source,
       };
     }
@@ -81,12 +104,10 @@ import { BRIDGE_SIGNAL, type RuntimeMessage } from './types.js';
     if (anyCandidate.properties?.definition && anyCandidate.properties?.connectionReferences) {
       return {
         displayName: anyCandidate.properties.displayName || anyCandidate.displayName || anyCandidate.name || '',
-        envId: currentEnvId,
         flow: {
           connectionReferences: anyCandidate.properties.connectionReferences,
           definition: anyCandidate.properties.definition,
         },
-        flowId: currentFlowId,
         source,
       };
     }
@@ -238,6 +259,9 @@ import { BRIDGE_SIGNAL, type RuntimeMessage } from './types.js';
   };
 
   const patchFetch = () => {
+    if (probeState.fetchPatched) return;
+    probeState.fetchPatched = true;
+
     const originalFetch = window.fetch;
 
     const resolveFetchUrl = (input: RequestInfo | URL) => {
@@ -265,6 +289,9 @@ import { BRIDGE_SIGNAL, type RuntimeMessage } from './types.js';
   };
 
   const patchXhr = () => {
+    if (probeState.xhrPatched) return;
+    probeState.xhrPatched = true;
+
     const originalOpen = XMLHttpRequest.prototype.open;
     const originalSend = XMLHttpRequest.prototype.send;
 
@@ -300,11 +327,14 @@ import { BRIDGE_SIGNAL, type RuntimeMessage } from './types.js';
     };
   };
 
-  if (currentEnvId && currentFlowId) {
-    inspectBootstrapState();
+  const { envId, flowId } = getCurrentContext();
+  if (!envId || !flowId) return;
+
+  if (!probeState.initialized) {
+    probeState.initialized = true;
     patchFetch();
     patchXhr();
-    void tryAcquireMsalToken();
+
     setTimeout(inspectBootstrapState, 1500);
     setTimeout(inspectBootstrapState, 4000);
     setTimeout(() => {
@@ -314,4 +344,7 @@ import { BRIDGE_SIGNAL, type RuntimeMessage } from './types.js';
       void tryAcquireMsalToken();
     }, 4000);
   }
+
+  inspectBootstrapState();
+  void tryAcquireMsalToken();
 })();

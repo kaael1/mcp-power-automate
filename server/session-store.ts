@@ -33,7 +33,12 @@ export const loadSession = async () => {
 };
 
 export const saveSession = async (session: Session) => {
-  const parsed = sessionSchema.parse(session);
+  const sameEnvironment = activeSession?.envId === session.envId;
+  const parsed = sessionSchema.parse({
+    ...session,
+    legacyApiUrl: session.legacyApiUrl ?? (sameEnvironment ? activeSession?.legacyApiUrl : undefined),
+    legacyToken: session.legacyToken ?? (sameEnvironment ? activeSession?.legacyToken : undefined),
+  });
   await ensureDataDir();
   await fs.writeFile(getSessionFilePath(), `${JSON.stringify(parsed, null, 2)}\n`, 'utf8');
   activeSession = parsed;

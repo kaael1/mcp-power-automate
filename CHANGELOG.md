@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+- Made the bundled `power-automate-mcp` skill more provider-neutral so the same `SKILL.md` bundle can be reused across Codex, LobeHub, and other skill-capable clients.
+- Added multi-provider distribution guidance covering one canonical skill bundle, thin provider adapters, and local-first marketplace positioning.
+
 ## 0.4.1
 
 - Simplified the public README visuals so the main SVG banner reads cleanly on GitHub without clipped or crowded text.

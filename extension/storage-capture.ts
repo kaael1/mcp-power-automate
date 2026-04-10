@@ -8,6 +8,7 @@ declare global {
 }
 
 let extensionContextAlive = true;
+let deepScanTimer: number | null = null;
 let refreshTimer: number | null = null;
 let locationWatchTimer: number | null = null;
 let lastObservedUrl = window.location.href;
@@ -16,6 +17,11 @@ const isContextInvalidatedError = (error: unknown) =>
   error instanceof Error && /Extension context invalidated/i.test(error.message);
 
 const cleanupRuntimeHooks = () => {
+  if (deepScanTimer !== null) {
+    window.clearTimeout(deepScanTimer);
+    deepScanTimer = null;
+  }
+
   if (refreshTimer !== null) {
     window.clearInterval(refreshTimer);
     refreshTimer = null;
@@ -159,12 +165,12 @@ const inspectIndexedDb = async () => {
   return findings;
 };
 
-const reportBestToken = async () => {
+const reportBestToken = async ({ includeIndexedDb = false }: { includeIndexedDb?: boolean } = {}) => {
   try {
     const findings = dedupeFindings([
       ...inspectStorage(window.localStorage, 'localStorage'),
       ...inspectStorage(window.sessionStorage, 'sessionStorage'),
-      ...(await inspectIndexedDb()),
+      ...(includeIndexedDb ? await inspectIndexedDb() : []),
     ]);
 
     if (findings.length === 0) return;
@@ -197,6 +203,19 @@ const reportBestToken = async () => {
   } catch {
     // Ignore storage capture failures; request interception is still the primary path.
   }
+};
+
+const scheduleDeepScan = (delayMs = 15000) => {
+  if (!extensionContextAlive) return;
+
+  if (deepScanTimer !== null) {
+    window.clearTimeout(deepScanTimer);
+  }
+
+  deepScanTimer = window.setTimeout(() => {
+    deepScanTimer = null;
+    void reportBestToken({ includeIndexedDb: true });
+  }, delayMs);
 };
 
 const injectProbe = () => {
@@ -233,7 +252,6 @@ const handleFocus = () => {
 
 const handleStorage = () => {
   void reportBestToken();
-  injectProbe();
 };
 
 const handleLocationChange = () => {
@@ -241,6 +259,7 @@ const handleLocationChange = () => {
   lastObservedUrl = window.location.href;
   void reportBestToken();
   injectProbe();
+  scheduleDeepScan(5000);
 };
 
 window.__paMcpBridgeTeardown?.();
@@ -253,10 +272,10 @@ window.addEventListener('hashchange', handleLocationChange);
 
 void reportBestToken();
 injectProbe();
+scheduleDeepScan();
 window.addEventListener('focus', handleFocus);
 window.addEventListener('storage', handleStorage);
 refreshTimer = window.setInterval(() => {
   void reportBestToken();
-  injectProbe();
-}, 5000);
+}, 30000);
 locationWatchTimer = window.setInterval(handleLocationChange, 1000);

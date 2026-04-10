@@ -1,14 +1,16 @@
 ---
 name: power-automate-mcp
-description: Use when working with Power Automate flows through the local `power-automate-local` MCP server. Covers reading, validating, editing, running, inspecting, and reverting flows through the browser-backed local bridge.
+description: Use when working with Power Automate flows through the local MCP server from this repository. Covers reading, validating, editing, running, inspecting, and reverting flows through the browser-backed local bridge.
 ---
 
 # Power Automate MCP
 
-This skill teaches the agent how to operate Power Automate safely through the local `power-automate-local` MCP server and its browser extension bridge.
+This skill teaches the agent how to operate Power Automate safely through the local MCP server from this repository and its browser extension bridge.
 
-This file is written for Codex-style skill consumption.
-The MCP server itself is not Codex-only.
+This is a portable `SKILL.md` bundle for agent platforms that support repo-backed or marketplace-backed skills.
+The MCP server itself is provider-agnostic.
+
+Provider notes live in [references/providers.md](references/providers.md).
 
 Use this skill when the user wants to:
 
@@ -22,7 +24,8 @@ Use this skill when the user wants to:
 
 This skill assumes:
 
-- the MCP server `power-automate-local` is installed in Codex
+- this repository's MCP server is installed in the current client
+- the installed server may be labeled differently by the client, but examples below refer to it as `power-automate-local`
 - the browser extension from this repo is loaded
 - the user is logged into Power Automate in a Chromium browser
 - at least one flow from the relevant environment has been opened in the browser so auth and environment context are captured
@@ -63,8 +66,8 @@ Steps:
 1. Call `get_status`.
 2. Call `list_flows` if the selected target is unclear.
 3. Call `get_flow`.
-3. Optionally call `validate_flow`.
-4. If runs matter, call `get_latest_run` and `get_run_actions`.
+4. Optionally call `validate_flow`.
+5. If runs matter, call `get_latest_run` and `get_run_actions`.
 
 ### 2. Safe edit workflow
 
@@ -75,12 +78,12 @@ Steps:
 1. Call `get_status`.
 2. Call `list_flows` and `set_active_flow` unless the target is already explicit and confirmed.
 3. Call `get_flow`.
-3. Plan the smallest possible change.
-4. Call `validate_flow` on the candidate flow before save when possible.
-5. Call `update_flow`.
-6. Call `get_last_update`.
-7. Ask the user to refresh the tab, or review the saved change in the extension `Review` workspace before continuing.
-8. If the change looks wrong, call `revert_last_update`.
+4. Plan the smallest possible change.
+5. Call `validate_flow` on the candidate flow before save when possible.
+6. Call `update_flow`.
+7. Call `get_last_update`.
+8. Ask the user to refresh the tab, or review the saved change in the extension `Review` workspace before continuing.
+9. If the change looks wrong, call `revert_last_update`.
 
 ### 3. Manual trigger test workflow
 
@@ -90,12 +93,12 @@ Steps:
 
 1. Call `get_flow` and confirm the trigger is manual/request based.
 2. If needed, call `list_flows` and `set_active_flow` first.
-2. Call `get_trigger_callback_url`.
-3. Call `invoke_trigger` with a controlled test payload.
-4. Call `wait_for_run`.
-5. Call `get_run` and `get_run_actions`.
-6. Summarize whether the run succeeded and which actions were executed.
-7. If the flow response payload matters, report the callback response body too.
+3. Call `get_trigger_callback_url`.
+4. Call `invoke_trigger` with a controlled test payload.
+5. Call `wait_for_run`.
+6. Call `get_run` and `get_run_actions`.
+7. Summarize whether the run succeeded and which actions were executed.
+8. If the flow response payload matters, report the callback response body too.
 
 ### 4. Production-ish verification workflow
 

@@ -1,9 +1,15 @@
 # Publishing
 
-This repo supports two distribution paths today:
+This repo should publish one MCP runtime and one canonical skill bundle across multiple public surfaces.
 
-- `skills.sh` / Vercel-style skill install from GitHub
+Current surfaces:
+
+- npm package for direct MCP installs
 - Official MCP Registry via npm + `server.json`
+- GitHub-backed skill installs such as `npx skills add`
+- provider marketplaces such as LobeHub that can list the MCP, the skill bundle, or both
+
+See `docs/multi-provider-distribution.md` for the architectural rule: one repo, one MCP package, one canonical skill bundle, thin provider adapters.
 
 ## 1. Verify the package locally
 
@@ -35,6 +41,10 @@ npm publish --access public --otp 123456
 Expected package:
 
 - `@kaael1/mcp-power-automate`
+
+Expected reusable skill bundle:
+
+- `skills/power-automate-mcp`
 
 ## 3. Publish to the Official MCP Registry
 
@@ -70,7 +80,37 @@ This uses:
 - `package.json#mcpName`
 - `server.json`
 
-## 4. Verify
+## 4. Refresh skill surfaces
+
+Keep the skill provider-neutral and publish the same folder everywhere possible:
+
+- canonical folder: `skills/power-automate-mcp`
+- canonical skill file: `skills/power-automate-mcp/SKILL.md`
+
+GitHub-backed install path:
+
+```powershell
+npx skills add kaael1/mcp-power-automate --skill power-automate-mcp
+```
+
+If a provider supports `SKILL.md` bundles directly, prefer submitting this same folder instead of maintaining a forked copy.
+
+## 5. Refresh provider marketplaces
+
+For LobeHub and similar directories, think in two listings:
+
+1. MCP listing
+   Use the npm package, GitHub repo, and `server.json` metadata.
+2. Skill listing
+   Use `skills/power-automate-mcp` as the canonical bundle.
+
+Position the MCP as local or local-first because it depends on:
+
+- a local Chromium extension
+- a logged-in browser session
+- a local bridge and local MCP process
+
+## 6. Verify
 
 Check npm:
 
@@ -97,3 +137,4 @@ Notes:
 - If the npm release is newer than the Official MCP Registry listing, re-run the registry publish step so public metadata stays aligned.
 - skills.sh discoverability is influenced by install telemetry, so the direct `npx skills add kaael1/mcp-power-automate --skill power-automate-mcp` path matters for early momentum.
 - The newer `mcp-publisher` CLI accepts `publish --dry-run`, which is useful for validating `server.json` before pushing a live registry update.
+- When adding a new provider, prefer adding a thin adapter doc or marketplace entry rather than forking `skills/power-automate-mcp/SKILL.md`.

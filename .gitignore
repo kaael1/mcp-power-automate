@@ -2,6 +2,10 @@ node_modules/
 dist/
 .run/
 .tmp_uiux_files/
+.playwright-mcp/
+tmp/
+mcp-publisher.exe
+mcp-publisher.tar.gz
 data/*.json
 !data/.gitkeep
 FLOW_REVIEW.md
