@@ -181,8 +181,8 @@ function CurrentFlowPanel({
                 )}
               </p>
             </div>
-            <Button className="shrink-0" onClick={() => onAction({ type: 'set-active-flow-from-tab' })} size="sm" variant="outline">
-              {t(locale, 'Use tab', 'Usar aba')}
+            <Button className="shrink-0" onClick={() => onAction({ type: 'select-work-tab' })} size="sm" variant="outline">
+              {t(locale, 'Use as work tab', 'Usar como aba de trabalho')}
             </Button>
           </div>
         </div>

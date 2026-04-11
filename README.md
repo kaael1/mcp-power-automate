@@ -22,7 +22,7 @@ Built for MCP users who want to do real Power Automate work without getting stuc
 This project lets an agent:
 
 - list flows from the current environment, including owned and shared-visible flows
-- select an explicit target flow instead of following the active tab
+- select an explicit target flow and an explicit work tab instead of following whichever tab last emitted capture data
 - read, validate, update, create, clone, test, inspect runs, and revert flows
 - use the browser only for auth and visual context while the MCP owns the workflow logic
 
@@ -35,6 +35,7 @@ The server is MCP-client agnostic.
 
 - No Microsoft Entra ID app registration just to get started
 - Explicit target flow locking instead of following whatever tab happens to be active
+- Multiple Power Automate tabs can stay open while one explicit work tab drives the effective browser-backed session
 - Browser-backed auth that matches how teams already work in Power Automate
 - Structured review diff plus one-step rollback after saves
 - Local-first architecture that keeps the browser for context while the MCP handles the workflow logic
@@ -198,8 +199,9 @@ bun run check
 2. Open any flow in the target Power Automate environment.
 3. Let the extension capture auth and environment context.
 4. Ask Codex to `list_flows`.
-5. Ask Codex to `select_flow` for the flow you actually want.
-6. Continue with `get_context`, `get_flow`, `preview_flow_update`, `validate_flow`, `apply_flow_update`, `list_runs`, `get_run`, `wait_for_run`, or `invoke_trigger`.
+5. If you have multiple Power Automate tabs open, use `list_captured_tabs` and `select_work_tab` to choose the work tab first.
+6. Ask Codex to `select_flow` for the flow you actually want.
+7. Continue with `get_context`, `get_flow`, `preview_flow_update`, `validate_flow`, `apply_flow_update`, `list_runs`, `get_run`, `wait_for_run`, or `invoke_trigger`.
 
 The popup and side panel help you:
 
@@ -220,6 +222,8 @@ The popup and side panel help you:
 ## Available MCP tools
 
 - `get_context`
+- `list_captured_tabs`
+- `select_work_tab`
 - `get_status`
 - `get_health`
 - `list_flows`
@@ -250,6 +254,8 @@ The popup and side panel help you:
 Recommended v1 workflow:
 
 - `get_context`
+- `list_captured_tabs`
+- `select_work_tab`
 - `list_flows`
 - `select_flow`
 - `get_flow`

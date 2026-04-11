@@ -32,8 +32,28 @@ describe('stores', () => {
     await sessionStore.saveSession(validSession);
 
     const savedFile = await readFile(path.join(tempDir, 'session.json'), 'utf8');
+    const capturedSessionsFile = await readFile(path.join(tempDir, 'captured-sessions.json'), 'utf8');
+    const selectedWorkTabFile = await readFile(path.join(tempDir, 'selected-work-tab.json'), 'utf8');
     expect(JSON.parse(savedFile)).toMatchObject({
       data: validSession,
+      version: 1,
+    });
+    expect(JSON.parse(capturedSessionsFile)).toMatchObject({
+      data: {
+        records: {
+          '0': expect.objectContaining({
+            envId: validSession.envId,
+            flowId: validSession.flowId,
+            tabId: 0,
+          }),
+        },
+      },
+      version: 1,
+    });
+    expect(JSON.parse(selectedWorkTabFile)).toMatchObject({
+      data: {
+        tabId: 0,
+      },
       version: 1,
     });
     expect(sessionStore.getSessionFilePath()).toBe(path.join(tempDir, 'session.json'));
@@ -128,5 +148,36 @@ describe('stores', () => {
         }),
       ]),
     );
+  });
+
+  it('keeps captured sessions per tab and switches the selected work tab explicitly', async () => {
+    const sessionStore = await import('../server/session-store.js');
+    const capturedSessionsStore = await import('../server/captured-sessions-store.js');
+    const selectedWorkTabStore = await import('../server/selected-work-tab-store.js');
+
+    await sessionStore.saveSession({
+      ...validSession,
+      flowId: 'flow-a',
+      tabId: 101,
+    });
+    await capturedSessionsStore.upsertCapturedSession({
+      ...validSession,
+      capturedAt: '2026-04-01T00:05:00.000Z',
+      envId: 'Default-999',
+      flowId: 'flow-b',
+      lastSeenAt: '2026-04-01T00:05:00.000Z',
+      tabId: 202,
+    });
+
+    await selectedWorkTabStore.saveSelectedWorkTab({
+      selectedAt: '2026-04-01T00:06:00.000Z',
+      tabId: 202,
+    });
+
+    expect(sessionStore.getSession()).toMatchObject({
+      envId: 'Default-999',
+      flowId: 'flow-b',
+    });
+    expect(capturedSessionsStore.listCapturedSessions().map((session) => session.tabId)).toEqual([202, 101]);
   });
 });

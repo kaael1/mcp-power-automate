@@ -1,5 +1,12 @@
 import { getActiveTarget, saveActiveTarget } from './active-target-store.js';
-import type { BridgeMode, CapabilityReasonCode, CapabilityStatus, ContextPayload, PowerAutomateContext } from './bridge-types.js';
+import type {
+  BridgeMode,
+  CapabilityReasonCode,
+  CapabilityStatus,
+  CapturedSessionSummary,
+  ContextPayload,
+  PowerAutomateContext,
+} from './bridge-types.js';
 import {
   buildRequestUrl,
   createLastUpdateRecord,
@@ -11,11 +18,13 @@ import {
   TERMINAL_RUN_STATUSES,
   withFailedAction,
 } from './client-helpers.js';
+import { getCapturedSession, listCapturedSessions } from './captured-sessions-store.js';
 import { getFlowCatalogForEnv, saveFlowCatalog } from './flow-catalog-store.js';
 import { getFlowSnapshot, getFlowSnapshotForFlow } from './flow-snapshot-store.js';
 import { getLastRun, getLastRunForFlow, saveLastRun } from './last-run-store.js';
 import type {
   ActiveTarget,
+  CapturedSession,
   CloneFlowInput,
   CreateFlowInput,
   FlowCatalog,
@@ -37,6 +46,7 @@ import type {
 import { editorSchema } from './schemas.js';
 import { PowerAutomateSessionError } from './errors.js';
 import { getSession } from './session-store.js';
+import { getSelectedWorkTab, saveSelectedWorkTab } from './selected-work-tab-store.js';
 import { getStoreDiagnostics } from './store-utils.js';
 import { getTokenAudit } from './token-audit-store.js';
 import { hasLegacyCompatibleToken } from './token-compat.js';
@@ -106,7 +116,7 @@ const createTabTargetFromSession = (session: Session): ActiveTarget | null => {
 };
 
 const getActiveOrTabTarget = (session: Session): ActiveTarget | null => {
-  const activeTarget = getActiveTarget();
+  const activeTarget = getActiveTarget(session.envId);
 
   if (activeTarget?.envId === session.envId) {
     return activeTarget;
@@ -155,6 +165,53 @@ const resolveTarget = (session: Session, target?: TargetRef): ResolvedTarget | n
     flowId: activeTarget.flowId,
     selectedAt: activeTarget.selectedAt,
     selectionSource: activeTarget.selectionSource,
+  };
+};
+
+const summarizeCapturedSession = (session: CapturedSession): CapturedSessionSummary => ({
+  capturedAt: session.capturedAt,
+  displayName: resolveFlowDisplayName({
+    envId: session.envId,
+    flowId: session.flowId,
+  }),
+  envId: session.envId,
+  flowId: session.flowId,
+  hasLegacyApi: Boolean(session.legacyApiUrl && session.legacyToken) || hasLegacyCompatibleToken(session.apiToken),
+  isSelected: getSelectedWorkTab()?.tabId === session.tabId,
+  lastSeenAt: session.lastSeenAt,
+  portalUrl: session.portalUrl || null,
+  tabId: session.tabId,
+});
+
+export const listCapturedTabs = () => listCapturedSessions().map(summarizeCapturedSession);
+
+export const selectWorkTab = async ({ tabId }: { tabId: number }) => {
+  const session = getCapturedSession(tabId);
+
+  if (!session) {
+    throw new PowerAutomateSessionError({
+      code: 'NO_SESSION',
+      message: `No captured browser session is stored for tab ${tabId}.`,
+    });
+  }
+
+  await saveSelectedWorkTab({
+    selectedAt: new Date().toISOString(),
+    tabId,
+  });
+
+  if (!getActiveTarget(session.envId)) {
+    await saveActiveTarget({
+      displayName: null,
+      envId: session.envId,
+      flowId: session.flowId,
+      selectedAt: new Date().toISOString(),
+      selectionSource: 'tab-capture',
+    });
+  }
+
+  return {
+    selectedWorkSession: summarizeCapturedSession(session),
   };
 };
 
@@ -491,12 +548,17 @@ export const getStatus = () => {
   const session = getSession();
   const legacySession = session ? getPreferredLegacySession(session) : null;
   const activeTarget = session ? resolveTarget(session) : null;
+  const selectedWorkTab = getSelectedWorkTab();
+  const capturedSessions = listCapturedTabs();
   const currentTabFlowName = session ? resolveCurrentTabFlowName(session) : null;
 
   if (!session) {
     return {
       connected: false,
-      message: 'Open or refresh a flow in Power Automate with the extension enabled to capture a session.',
+      message:
+        capturedSessions.length > 0 ?
+          'A captured session exists, but no work tab is selected. Select a work tab before continuing.'
+        : 'Open or refresh a flow in Power Automate with the extension enabled to capture a session.',
     };
   }
 
@@ -516,6 +578,7 @@ export const getStatus = () => {
     hasLegacyApi: Boolean(legacySession),
     legacySource: legacySession?.source || null,
     portalUrl: session.portalUrl || null,
+    selectedWorkTabId: selectedWorkTab?.tabId || null,
   };
 };
 
@@ -930,7 +993,7 @@ export const cloneFlow = async ({ displayName, makeActive = true, sourceFlowId }
     flow: source.flow,
   });
 
-  let activeTarget = getActiveTarget();
+  let activeTarget = getActiveTarget(session.envId);
 
   if (makeActive) {
     activeTarget = await saveActiveTarget({
@@ -991,20 +1054,28 @@ export const getContext = ({ bridgeMode = 'owned' }: { bridgeMode?: BridgeMode }
   const session = getSession();
   const legacySession = session ? getPreferredLegacySession(session) : null;
   const resolvedTarget = session ? resolveTarget(session) : null;
+  const selectedWorkTab = getSelectedWorkTab();
+  const selectedWorkSession = selectedWorkTab ? getCapturedSession(selectedWorkTab.tabId) : null;
+  const capturedSessions = listCapturedTabs();
   const activeTarget =
-    session && getActiveTarget()?.envId === session.envId ? getActiveTarget() : null;
+    session && getActiveTarget(session.envId)?.envId === session.envId ? getActiveTarget(session.envId) : null;
   const currentTab =
-    session ?
+    selectedWorkSession ?
       {
-        displayName: resolveCurrentTabFlowName(session),
-        envId: session.envId,
-        flowId: session.flowId || null,
+        displayName: summarizeCapturedSession(selectedWorkSession).displayName,
+        envId: selectedWorkSession.envId,
+        flowId: selectedWorkSession.flowId,
       }
     : null;
   const storeHealthItems = getStoreDiagnostics();
   const hasStoreCorruption = storeHealthItems.some((item) => item.state === 'corrupted');
 
-  const noSessionReason = hasStoreCorruption ? 'One or more local state files are corrupted. Reopen the flow or clear local state.' : 'Open or refresh a Power Automate flow so the extension can capture a session.';
+  const noSessionReason =
+    hasStoreCorruption ?
+      'One or more local state files are corrupted. Reopen the flow or clear local state.'
+    : capturedSessions.length > 0 ?
+      'Select a work tab before running session-dependent actions.'
+    : 'Open or refresh a Power Automate flow so the extension can capture a session.';
   const noSessionCode: CapabilityReasonCode = hasStoreCorruption ? 'STORE_CORRUPTED' : 'NO_SESSION';
   const noTargetReason = 'Select a flow or sync the current browser tab before running target-specific actions.';
 
@@ -1080,8 +1151,10 @@ export const getContext = ({ bridgeMode = 'owned' }: { bridgeMode?: BridgeMode }
     },
     selection: {
       activeTarget: activeTarget ? { ...activeTarget, displayName: resolveFlowDisplayName(activeTarget) } : null,
+      capturedSessions,
       currentTab,
       resolvedTarget,
+      selectedWorkSession: selectedWorkSession ? summarizeCapturedSession(selectedWorkSession) : null,
     },
     session: {
       capturedAt: session?.capturedAt || null,

@@ -26,6 +26,16 @@ export const sessionSchema = z.object({
   portalUrl: z.string().url().optional(),
 });
 
+export const capturedSessionSchema = sessionSchema.extend({
+  lastSeenAt: z.string().trim().min(1, 'lastSeenAt is required'),
+  tabId: z.number().int().nonnegative(),
+});
+
+export const selectedWorkTabSchema = z.object({
+  selectedAt: z.string().trim().min(1, 'selectedAt is required'),
+  tabId: z.number().int().nonnegative(),
+});
+
 export const flowContentSchema = z.object({
   connectionReferences: z.record(z.string(), z.any()),
   definition: z.record(z.string(), z.any()),
@@ -205,6 +215,10 @@ export const optionalTargetInputSchema = z.object({
   target: targetRefSchema.optional(),
 });
 
+export const selectWorkTabInputSchema = z.object({
+  tabId: z.number().int().nonnegative(),
+});
+
 export const createFlowInputSchema = z.object({
   displayName: z.string().trim().min(1, 'displayName is required'),
   triggerType: z.enum(['recurrence', 'request']).optional(),
@@ -244,6 +258,8 @@ export type EnvId = z.infer<typeof envIdSchema>;
 export type SelectionSource = z.infer<typeof selectionSourceSchema>;
 export type TargetRef = z.infer<typeof targetRefSchema>;
 export type Session = z.infer<typeof sessionSchema>;
+export type CapturedSession = z.infer<typeof capturedSessionSchema>;
+export type SelectedWorkTab = z.infer<typeof selectedWorkTabSchema>;
 export type FlowContent = z.infer<typeof flowContentSchema>;
 export type FlowCatalogItem = z.infer<typeof flowCatalogItemSchema>;
 export type FlowCatalog = z.infer<typeof flowCatalogSchema>;
@@ -268,6 +284,7 @@ export type ListRunsInput = z.infer<typeof listRunsInputSchema>;
 export type ListFlowsInput = z.infer<typeof listFlowsInputSchema>;
 export type SetActiveFlowInput = z.infer<typeof setActiveFlowInputSchema>;
 export type OptionalTargetInput = z.infer<typeof optionalTargetInputSchema>;
+export type SelectWorkTabInput = z.infer<typeof selectWorkTabInputSchema>;
 export type CreateFlowInput = z.infer<typeof createFlowInputSchema>;
 export type CloneFlowInput = z.infer<typeof cloneFlowInputSchema>;
 export type GetRunInput = z.infer<typeof getRunInputSchema>;

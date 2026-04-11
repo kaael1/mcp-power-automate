@@ -33,7 +33,7 @@ export interface BackgroundTabState {
 }
 
 export interface BackgroundState {
-  lastSentSignature: string | null;
+  lastSentSignatures: Record<number, string>;
   tabs: Record<number, BackgroundTabState>;
 }
 
@@ -87,6 +87,7 @@ export type PopupRequestMessage =
   | { type: 'get-dashboard' }
   | { type: 'refresh-current-tab' }
   | { type: 'set-active-flow-from-tab' }
+  | { type: 'select-work-tab' }
   | { flowId: string; type: 'set-active-flow' }
   | { type: 'refresh-flows' }
   | { flowId: string; type: 'toggle-pinned-flow' }

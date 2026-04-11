@@ -1,11 +1,4 @@
-import type {
-  ActiveTarget,
-  FlowSnapshot,
-  LastRun,
-  LastUpdate,
-  Session,
-  TokenAudit,
-} from './schemas.js';
+import type { ActiveTarget, FlowSnapshot, LastRun, LastUpdate, Session, TokenAudit } from './schemas.js';
 
 export type BridgeMode = 'owned' | 'reused';
 export type CapabilityReasonCode =
@@ -44,6 +37,7 @@ export interface StoreHealthItem {
 
 export interface ContextSelection {
   activeTarget: ActiveTarget | null;
+  capturedSessions: CapturedSessionSummary[];
   currentTab: {
     displayName: string | null;
     envId: string | null;
@@ -56,6 +50,19 @@ export interface ContextSelection {
     selectedAt: string | null;
     selectionSource: string | null;
   } | null;
+  selectedWorkSession: CapturedSessionSummary | null;
+}
+
+export interface CapturedSessionSummary {
+  capturedAt: string;
+  displayName: string | null;
+  envId: string;
+  flowId: string;
+  hasLegacyApi: boolean;
+  isSelected: boolean;
+  lastSeenAt: string;
+  portalUrl: string | null;
+  tabId: number;
 }
 
 export interface PowerAutomateContext {
@@ -106,6 +113,17 @@ export interface ContextPayload {
   context: PowerAutomateContext;
   lastRun: LastRun | null;
   lastUpdate: LastUpdate | null;
+  ok: true;
+}
+
+export interface CapturedSessionsPayload {
+  sessions: CapturedSessionSummary[];
+  selectedTabId: number | null;
+  ok: true;
+}
+
+export interface SelectWorkTabResponse {
+  selectedTabId: number;
   ok: true;
 }
 

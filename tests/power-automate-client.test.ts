@@ -153,4 +153,34 @@ describe('power automate client', () => {
     expect(contextPayload.context.capabilities.canReadFlows.reasonCode).toBe('STORE_CORRUPTED');
     expect(contextPayload.context.diagnostics.storeHealth.ok).toBe(false);
   });
+
+  it('lists captured tabs and lets the selected work tab drive the effective context', async () => {
+    const sessionStore = await import('../server/session-store.js');
+    const capturedSessionsStore = await import('../server/captured-sessions-store.js');
+    const client = await import('../server/power-automate-client.js');
+
+    await sessionStore.saveSession({
+      ...validSession,
+      tabId: 111,
+    });
+    await capturedSessionsStore.upsertCapturedSession({
+      ...validSession,
+      capturedAt: '2026-04-01T00:05:00.000Z',
+      envId: 'Default-999',
+      flowId: 'flow-b',
+      lastSeenAt: '2026-04-01T00:05:00.000Z',
+      tabId: 222,
+    });
+
+    const capturedTabs = client.listCapturedTabs();
+    expect(capturedTabs.map((session) => session.tabId)).toEqual([222, 111]);
+    expect(client.getContextPayload().context.session.flowId).toBe('flow-a');
+
+    await client.selectWorkTab({ tabId: 222 });
+
+    const contextPayload = client.getContextPayload();
+    expect(contextPayload.context.selection.selectedWorkSession?.tabId).toBe(222);
+    expect(contextPayload.context.session.envId).toBe('Default-999');
+    expect(contextPayload.context.session.flowId).toBe('flow-b');
+  });
 });

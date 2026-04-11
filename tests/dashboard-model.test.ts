@@ -370,6 +370,19 @@ describe('dashboard model', () => {
                 selectedAt: '2026-04-01T10:01:00.000Z',
                 selectionSource: 'manual',
               },
+              capturedSessions: [
+                {
+                  capturedAt: '2026-04-01T10:02:00.000Z',
+                  displayName: 'Flow A',
+                  envId: 'Default-123',
+                  flowId: 'flow-a',
+                  hasLegacyApi: true,
+                  isSelected: true,
+                  lastSeenAt: '2026-04-01T10:02:00.000Z',
+                  portalUrl: 'https://make.powerautomate.com',
+                  tabId: 123,
+                },
+              ],
               currentTab: {
                 displayName: 'Flow A',
                 envId: 'Default-123',
@@ -381,6 +394,17 @@ describe('dashboard model', () => {
                 flowId: 'flow-a',
                 selectedAt: '2026-04-01T10:01:00.000Z',
                 selectionSource: 'manual',
+              },
+              selectedWorkSession: {
+                capturedAt: '2026-04-01T10:02:00.000Z',
+                displayName: 'Flow A',
+                envId: 'Default-123',
+                flowId: 'flow-a',
+                hasLegacyApi: true,
+                isSelected: true,
+                lastSeenAt: '2026-04-01T10:02:00.000Z',
+                portalUrl: 'https://make.powerautomate.com',
+                tabId: 123,
               },
             },
             session: {

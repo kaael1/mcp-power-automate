@@ -1,5 +1,5 @@
 import type { ContextPayload, PopupStatusPayload, PopupTokenMeta } from '../server/bridge-types.js';
-import type { FlowSnapshot, LastRun, LastUpdate, Session, TokenAudit } from '../server/schemas.js';
+import type { CapturedSession, FlowSnapshot, LastRun, LastUpdate, Session, TokenAudit } from '../server/schemas.js';
 import { decodeJwtPayload, scoreToken } from './token-utils.js';
 import { buildBaseUrl, extractAuthorization, extractFromApiUrl, extractFromPortalUrl } from './url-utils.js';
 import {
@@ -15,7 +15,7 @@ import {
 } from './types.js';
 
 const state: BackgroundState = {
-  lastSentSignature: null,
+  lastSentSignatures: {},
   tabs: {},
 };
 
@@ -50,7 +50,7 @@ const syncCapturedTabContext = async (
   if (tabState.apiUrl && tabState.apiToken && tabState.envId && tabState.flowId) {
     const session = buildSessionFromTabState(tabState);
     if (session) {
-      await maybeSendSession(session);
+      await maybeSendSession(tabId, session);
     }
   }
 };
@@ -133,7 +133,7 @@ const maybePromoteApiToken = async (tabState: BackgroundTabState, nextToken: str
   }
 };
 
-const buildSessionSignature = (session: Session) =>
+const buildSessionSignature = (session: CapturedSession) =>
   JSON.stringify({
     apiToken: session.apiToken,
     apiUrl: session.apiUrl,
@@ -141,6 +141,8 @@ const buildSessionSignature = (session: Session) =>
     flowId: session.flowId,
     legacyApiUrl: session.legacyApiUrl || null,
     legacyToken: session.legacyToken || null,
+    portalUrl: session.portalUrl || null,
+    tabId: session.tabId,
   });
 
 const checkBridgeHealth = async () => {
@@ -159,8 +161,8 @@ const checkBridgeHealth = async () => {
   }
 };
 
-const postSessionToBridge = async (session: Session) => {
-  const response = await fetch(`${BRIDGE_URL}/session`, {
+const postCapturedSessionToBridge = async (session: CapturedSession) => {
+  const response = await fetch(`${BRIDGE_URL}/captured-session`, {
     body: JSON.stringify(session),
     headers: {
       'Content-Type': 'application/json',
@@ -171,6 +173,23 @@ const postSessionToBridge = async (session: Session) => {
 
   if (!response.ok) {
     throw new Error((body.error as string | undefined) || `Bridge request failed with ${response.status}`);
+  }
+
+  return body;
+};
+
+const postRemoveCapturedSessionToBridge = async (tabId: number) => {
+  const response = await fetch(`${BRIDGE_URL}/captured-session/remove`, {
+    body: JSON.stringify({ tabId }),
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    method: 'POST',
+  });
+  const body = await readJsonResponse<Record<string, unknown>>(response);
+
+  if (!response.ok) {
+    throw new Error((body.error as string | undefined) || `Remove captured session bridge request failed with ${response.status}`);
   }
 
   return body;
@@ -330,6 +349,23 @@ const postSetActiveFlowFromTabToBridge = async () => {
   return body.activeFlow || null;
 };
 
+const postSelectWorkTabForBridge = async (tabId: number) => {
+  const response = await fetch(`${BRIDGE_URL}/selected-work-tab`, {
+    body: JSON.stringify({ tabId }),
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    method: 'POST',
+  });
+  const body = await readJsonResponse<Record<string, unknown>>(response);
+
+  if (!response.ok) {
+    throw new Error((body.error as string | undefined) || `Select work tab bridge request failed with ${response.status}`);
+  }
+
+  return body;
+};
+
 const postRevertLastUpdateToBridge = async () => {
   const response = await fetch(`${BRIDGE_URL}/revert-last-update`, {
     headers: {
@@ -379,16 +415,21 @@ const persistSessionStatus = async ({ error, health, sentAt, session }: PersistS
   }
 };
 
-const maybeSendSession = async (session: Session) => {
-  const signature = buildSessionSignature(session);
+const maybeSendSession = async (tabId: number, session: Session) => {
+  const capturedSession: CapturedSession = {
+    ...session,
+    lastSeenAt: new Date().toISOString(),
+    tabId,
+  };
+  const signature = buildSessionSignature(capturedSession);
 
-  if (signature === state.lastSentSignature) {
+  if (signature === state.lastSentSignatures[tabId]) {
     return false;
   }
 
   try {
-    const bridgeResult = await postSessionToBridge(session);
-    state.lastSentSignature = signature;
+    const bridgeResult = await postCapturedSessionToBridge(capturedSession);
+    state.lastSentSignatures[tabId] = signature;
     await persistSessionStatus({
       error: null,
       health: { ok: true, ...bridgeResult },
@@ -404,6 +445,26 @@ const maybeSendSession = async (session: Session) => {
     });
     return false;
   }
+};
+
+const getCurrentBrowserTabFlow = async (context: ContextPayload | null) => {
+  const [activeTab] = await queryTabs({ active: true, currentWindow: true });
+
+  if (!activeTab?.id) return null;
+
+  const portalData = extractFromPortalUrl(activeTab.url || '');
+  const tabState = state.tabs[activeTab.id];
+  const matchingCapturedSession = context?.context.selection.capturedSessions.find((session) => session.tabId === activeTab.id);
+
+  if (!portalData?.flowId && !tabState?.flowId && !matchingCapturedSession?.flowId) {
+    return null;
+  }
+
+  return {
+    displayName: matchingCapturedSession?.displayName || null,
+    envId: portalData?.envId || tabState?.envId || matchingCapturedSession?.envId || null,
+    flowId: portalData?.flowId || tabState?.flowId || matchingCapturedSession?.flowId || null,
+  };
 };
 
 const getPopupStatus = async (): Promise<PopupStatusPayload> => {
@@ -425,9 +486,10 @@ const getPopupStatus = async (): Promise<PopupStatusPayload> => {
     await setStorage({
       [STORAGE_KEYS.lastContext]: context,
     });
+    const currentBrowserTab = await getCurrentBrowserTabFlow(context);
     activeFlow = {
       activeTarget: context.context.selection.activeTarget,
-      currentTab: context.context.selection.currentTab,
+      currentTab: currentBrowserTab || context.context.selection.currentTab,
     };
     lastRun = context.lastRun;
     lastUpdate = context.lastUpdate;
@@ -482,7 +544,17 @@ const getPopupStatus = async (): Promise<PopupStatusPayload> => {
     lastRun,
     lastSentAt: (storage[STORAGE_KEYS.lastSentAt] as string | null) || null,
     lastUpdate,
-    session: (storage[STORAGE_KEYS.lastSession] as Session | null) || null,
+    session:
+      context ?
+        {
+          apiToken: '',
+          apiUrl: '',
+          capturedAt: context.context.session.capturedAt || '',
+          envId: context.context.session.envId || '',
+          flowId: context.context.session.flowId || '',
+          portalUrl: context.context.session.portalUrl || undefined,
+        }
+      : ((storage[STORAGE_KEYS.lastSession] as Session | null) || null),
     snapshot: (storage[STORAGE_KEYS.lastSnapshot] as FlowSnapshot | null) || null,
     tokenAudit: (storage[STORAGE_KEYS.tokenAudit] as TokenAudit | null) || null,
     tokenMeta: (storage[STORAGE_KEYS.tokenMeta] as PopupTokenMeta | null) || null,
@@ -531,8 +603,13 @@ const resendLastSession = async () => {
     throw new Error('No captured session is stored yet.');
   }
 
-  state.lastSentSignature = null;
-  await maybeSendSession(session);
+  const activeTab = (await queryTabs({ active: true, currentWindow: true }))[0];
+  if (!activeTab?.id) {
+    throw new Error('No active browser tab was found.');
+  }
+
+  delete state.lastSentSignatures[activeTab.id];
+  await maybeSendSession(activeTab.id, session);
   return getPopupStatus();
 };
 
@@ -638,12 +715,14 @@ const handleApiRequest = async (
   const session = buildSessionFromTabState(tabState);
 
   if (session) {
-    await maybeSendSession(session);
+    await maybeSendSession(details.tabId, session);
   }
 };
 
 chrome.tabs.onRemoved.addListener((tabId) => {
   delete state.tabs[tabId];
+  delete state.lastSentSignatures[tabId];
+  void postRemoveCapturedSessionToBridge(tabId).catch(() => undefined);
 });
 
 chrome.webRequest.onBeforeSendHeaders.addListener(
@@ -721,7 +800,7 @@ chrome.runtime.onMessage.addListener((message: RuntimeMessage, sender, sendRespo
         if (tabState.apiUrl && tabState.envId && tabState.flowId) {
           const session = buildSessionFromTabState(tabState);
           if (session) {
-            return maybeSendSession(session);
+            return maybeSendSession(targetTabId, session);
           }
         }
 
@@ -760,6 +839,26 @@ chrome.runtime.onMessage.addListener((message: RuntimeMessage, sender, sendRespo
         await syncRecentFlowIds(activeFlow);
         sendResponse(await getDashboard());
       })
+      .catch((error) => sendResponse({ error: error instanceof Error ? error.message : String(error) }));
+    return true;
+  }
+
+  if (message?.type === 'select-work-tab') {
+    const targetTabId = sender?.tab?.id;
+
+    const selectPromise =
+      typeof targetTabId === 'number' ?
+        postSelectWorkTabForBridge(targetTabId)
+      : queryTabs({ active: true, currentWindow: true }).then(([tab]) => {
+          if (!tab?.id) {
+            throw new Error('No active browser tab was found.');
+          }
+
+          return postSelectWorkTabForBridge(tab.id);
+        });
+
+    selectPromise
+      .then(async () => sendResponse(await getDashboard()))
       .catch((error) => sendResponse({ error: error instanceof Error ? error.message : String(error) }));
     return true;
   }

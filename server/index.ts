@@ -6,6 +6,7 @@ import { ZodError } from 'zod';
 
 import type {
   BridgeErrorResponse,
+  CapturedSessionsPayload,
   ContextPayload,
   HealthPayload,
   LastRunResponse,
@@ -13,10 +14,12 @@ import type {
   RefreshLastRunResponse,
   RevertLastUpdateResponse,
   SessionCaptureResponse,
+  SelectWorkTabResponse,
   SnapshotCaptureResponse,
   TokenAuditResponse,
 } from './bridge-types.js';
 import { getActiveTarget, loadActiveTarget, saveActiveTarget } from './active-target-store.js';
+import { listCapturedSessions, loadCapturedSessions, removeCapturedSession, upsertCapturedSession } from './captured-sessions-store.js';
 import { loadFlowCatalog } from './flow-catalog-store.js';
 import { getFlowSnapshot, loadFlowSnapshot, saveFlowSnapshot } from './flow-snapshot-store.js';
 import {
@@ -28,13 +31,16 @@ import {
   refreshFlows,
   refreshLatestRun,
   revertLastUpdate,
+  listCapturedTabs,
   selectFlow,
+  selectWorkTab,
   selectTabFlow,
 } from './power-automate-client.js';
 import { toErrorPayload } from './errors.js';
 import { getLastRun, loadLastRun } from './last-run-store.js';
-import { bridgeHost, bridgePort, flowIdSchema, flowSnapshotSchema, sessionSchema, tokenAuditSchema } from './schemas.js';
+import { bridgeHost, bridgePort, capturedSessionSchema, flowIdSchema, flowSnapshotSchema, selectWorkTabInputSchema, sessionSchema, tokenAuditSchema } from './schemas.js';
 import { getSession, loadSession, saveSession } from './session-store.js';
+import { clearSelectedWorkTab, getSelectedWorkTab, loadSelectedWorkTab, saveSelectedWorkTab } from './selected-work-tab-store.js';
 import { getTokenAudit, loadTokenAudit, saveTokenAudit } from './token-audit-store.js';
 import { hasLegacyCompatibleToken } from './token-compat.js';
 import { createMcpApp } from './tools.js';
@@ -105,7 +111,7 @@ export const createHealthPayload = (): HealthPayload => {
   const snapshot = getFlowSnapshot();
   const tokenAudit = getTokenAudit();
   const lastUpdate = getLastUpdate();
-  const activeTarget = getActiveTarget();
+  const activeTarget = getActiveTarget(session?.envId);
 
   return {
     activeTarget,
@@ -152,6 +158,15 @@ export const createBridgeServer = () =>
         return;
       }
 
+      if (request.method === 'GET' && requestUrl.pathname === '/captured-sessions') {
+        sendJson(response, 200, {
+          ok: true,
+          selectedTabId: getSelectedWorkTab()?.tabId || null,
+          sessions: listCapturedTabs(),
+        } satisfies CapturedSessionsPayload);
+        return;
+      }
+
       if (request.method === 'GET' && requestUrl.pathname === '/last-update') {
         sendJson(response, 200, {
           lastUpdate: getLastUpdateSummary(),
@@ -172,7 +187,7 @@ export const createBridgeServer = () =>
         const body = await readJsonBody(request);
         const session = sessionSchema.parse(body);
         const savedSession = await saveSession(session);
-        const existingTarget = getActiveTarget();
+        const existingTarget = getActiveTarget(savedSession.envId);
 
         if (!existingTarget || existingTarget.envId !== savedSession.envId) {
           await saveActiveTarget({
@@ -191,6 +206,55 @@ export const createBridgeServer = () =>
           hasLegacyApi: hasLegacyCompatibleAccess(savedSession),
           ok: true,
         } satisfies SessionCaptureResponse);
+        return;
+      }
+
+      if (request.method === 'POST' && requestUrl.pathname === '/captured-session') {
+        const body = await readJsonBody(request);
+        const capturedSession = capturedSessionSchema.parse(body);
+        const savedSession = await upsertCapturedSession(capturedSession);
+        const selectedWorkTab = getSelectedWorkTab();
+
+        if (!selectedWorkTab && listCapturedSessions().length === 1) {
+          await saveSelectedWorkTab({
+            selectedAt: new Date().toISOString(),
+            tabId: savedSession.tabId,
+          });
+        }
+
+        const effectiveSelectedTabId = getSelectedWorkTab()?.tabId || null;
+
+        if (effectiveSelectedTabId === savedSession.tabId && !getActiveTarget(savedSession.envId)) {
+          await saveActiveTarget({
+            displayName: null,
+            envId: savedSession.envId,
+            flowId: savedSession.flowId,
+            selectedAt: new Date().toISOString(),
+            selectionSource: 'tab-capture',
+          });
+        }
+
+        sendJson(response, 200, {
+          capturedAt: savedSession.capturedAt,
+          envId: savedSession.envId,
+          flowId: savedSession.flowId,
+          hasLegacyApi: hasLegacyCompatibleAccess(savedSession),
+          ok: true,
+        } satisfies SessionCaptureResponse);
+        return;
+      }
+
+      if (request.method === 'POST' && requestUrl.pathname === '/captured-session/remove') {
+        const body = await readJsonBody(request);
+        const parsed = selectWorkTabInputSchema.parse(body);
+        const selectedWorkTab = getSelectedWorkTab();
+        await removeCapturedSession(parsed.tabId);
+
+        if (selectedWorkTab?.tabId === parsed.tabId) {
+          await clearSelectedWorkTab();
+        }
+
+        sendJson(response, 200, { ok: true });
         return;
       }
 
@@ -279,6 +343,17 @@ export const createBridgeServer = () =>
           activeFlow: await selectTabFlow(),
           ok: true,
         });
+        return;
+      }
+
+      if (request.method === 'POST' && requestUrl.pathname === '/selected-work-tab') {
+        const body = await readJsonBody(request);
+        const parsed = selectWorkTabInputSchema.parse(body);
+        const selected = await selectWorkTab({ tabId: parsed.tabId });
+        sendJson(response, 200, {
+          ok: true,
+          selectedTabId: selected.selectedWorkSession.tabId,
+        } satisfies SelectWorkTabResponse);
         return;
       }
 
@@ -376,6 +451,8 @@ const ensureBridgeServer = async () => {
 };
 
 const main = async () => {
+  await loadCapturedSessions();
+  await loadSelectedWorkTab();
   await loadSession();
   await loadActiveTarget();
   await loadFlowCatalog();

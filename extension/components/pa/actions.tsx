@@ -65,8 +65,8 @@ export function ActionGroup({
   if (canUseCurrentTab) {
     actions.push({
       icon: Link2,
-      label: t(locale, 'Use this tab', 'Usar esta aba'),
-      onClick: () => onAction({ type: 'set-active-flow-from-tab' }),
+      label: t(locale, 'Use as work tab', 'Usar como aba de trabalho'),
+      onClick: () => onAction({ type: 'select-work-tab' }),
       variant: includeOpenPanel ? 'secondary' : 'default',
     });
   }

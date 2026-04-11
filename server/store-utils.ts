@@ -1,4 +1,4 @@
-import { promises as fs } from 'node:fs';
+import { promises as fs, existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 
 export type StoreState = 'corrupted' | 'migrated' | 'missing' | 'ok';
@@ -123,6 +123,59 @@ export const readVersionedStore = async <T>({
       return null;
     }
 
+    setStoreDiagnostic({
+      filePath,
+      message: error instanceof Error ? error.message : String(error),
+      name,
+      state: 'corrupted',
+      version: null,
+    });
+    return null;
+  }
+};
+
+export const readVersionedStoreSync = <T>({
+  filePath,
+  migrate,
+  name,
+  parse,
+  version,
+}: {
+  filePath: string;
+  migrate: (value: unknown) => T;
+  name: string;
+  parse: (value: unknown) => T;
+  version: number;
+}) => {
+  if (!existsSync(filePath)) {
+    markStoreMissing(name, filePath);
+    return null;
+  }
+
+  try {
+    const raw = readFileSync(filePath, 'utf8');
+    const parsedJson = JSON.parse(raw) as unknown;
+
+    if (isVersionedStoreEnvelope(parsedJson) && parsedJson.version === version) {
+      const parsedValue = parse(parsedJson.data);
+      setStoreDiagnostic({
+        filePath,
+        name,
+        state: 'ok',
+        version,
+      });
+      return parsedValue;
+    }
+
+    const migratedValue = parse(migrate(parsedJson));
+    setStoreDiagnostic({
+      filePath,
+      name,
+      state: 'migrated',
+      version: isVersionedStoreEnvelope(parsedJson) ? parsedJson.version : null,
+    });
+    return migratedValue;
+  } catch (error) {
     setStoreDiagnostic({
       filePath,
       message: error instanceof Error ? error.message : String(error),

@@ -9,6 +9,7 @@ import {
   getCurrentFlow,
   getLastRunSummary,
   getLastUpdateSummary,
+  listCapturedTabs,
   previewFlowUpdate,
   getLatestRun,
   getRun,
@@ -21,6 +22,7 @@ import {
   refreshFlows,
   revertLastUpdate,
   selectFlow,
+  selectWorkTab,
   selectTabFlow,
   setActiveFlow,
   setActiveFlowFromTab,
@@ -37,6 +39,7 @@ import {
   listFlowsInputSchema,
   listRunsInputSchema,
   optionalTargetInputSchema,
+  selectWorkTabInputSchema,
   setActiveFlowInputSchema,
   triggerCallbackInputSchema,
   updateFlowInputSchema,
@@ -178,6 +181,37 @@ export const createMcpApp = () => {
     async () => {
       try {
         return createTextResult(await refreshFlows());
+      } catch (error) {
+        return createErrorResult(error);
+      }
+    },
+  );
+
+  server.registerTool(
+    'list_captured_tabs',
+    {
+      description: 'List browser tabs whose Power Automate sessions have been captured by the extension.',
+    },
+    async () => {
+      try {
+        return createTextResult({
+          sessions: listCapturedTabs(),
+        });
+      } catch (error) {
+        return createErrorResult(error);
+      }
+    },
+  );
+
+  server.registerTool(
+    'select_work_tab',
+    {
+      description: 'Select which captured browser tab should drive the MCP work context.',
+      inputSchema: selectWorkTabInputSchema,
+    },
+    async ({ tabId }) => {
+      try {
+        return createTextResult(await selectWorkTab({ tabId }));
       } catch (error) {
         return createErrorResult(error);
       }

@@ -8,7 +8,7 @@ export type AttentionSeverity = 'critical' | 'info' | 'success' | 'warning';
 
 export interface DashboardAttentionItem {
   actionLabel?: string;
-  actionType?: 'open-side-panel' | 'refresh-current-tab' | 'refresh-last-run' | 'set-active-flow-from-tab';
+  actionType?: 'open-side-panel' | 'refresh-current-tab' | 'refresh-last-run' | 'select-work-tab' | 'set-active-flow-from-tab';
   description: string;
   id: string;
   severity: AttentionSeverity;
@@ -241,7 +241,7 @@ const buildAttentionItems = ({
   if (selectedTargetMismatch && activeTarget && currentTab) {
     items.push({
       actionLabel: t(locale, 'Follow this flow', 'Seguir este fluxo'),
-      actionType: 'set-active-flow-from-tab',
+      actionType: 'select-work-tab',
       description: t(
         locale,
         `This browser tab is showing ${currentTab.displayName}. Sync the assistant if this is the flow you want to work on.`,

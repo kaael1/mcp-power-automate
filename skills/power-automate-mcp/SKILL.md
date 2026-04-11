@@ -36,7 +36,7 @@ Always follow these rules:
 
 1. Treat the active browser flow as the target flow.
 2. Use `list_flows` plus `select_flow` before any meaningful edit or test.
-3. Use `get_context` before writes to confirm the selected target flow, current tab flow, and capabilities are not being confused.
+3. Use `get_context` before writes to confirm the selected target flow, selected work tab, current browser tab, and capabilities are not being confused.
 4. Do not edit if the user says another person or agent is actively editing the same flow.
 5. Prefer minimal changes and validate before and after save.
 6. Refresh the browser tab after save when the user needs visual confirmation.
@@ -48,6 +48,7 @@ Always follow these rules:
 Important limitations:
 
 - The MCP no longer follows the active tab automatically once a target flow is selected.
+- Multiple Power Automate tabs can stay open, but only the selected work tab drives the effective browser-backed session.
 - The browser tab still provides auth and current-environment context.
 - The agent should explicitly choose a target with `list_flows` and `select_flow`.
 - The system depends on browser-backed session and token capture.
@@ -64,10 +65,11 @@ Use this when the user asks what the flow does.
 Steps:
 
 1. Call `get_context`.
-2. Call `list_flows` if the selected target is unclear.
-3. Call `get_flow`.
-4. Optionally call `validate_flow`.
-5. If runs matter, call `get_latest_run` and `get_run_actions`.
+2. If multiple Power Automate tabs are open, call `list_captured_tabs` and `select_work_tab` first.
+3. Call `list_flows` if the selected target is unclear.
+4. Call `get_flow`.
+5. Optionally call `validate_flow`.
+6. If runs matter, call `get_latest_run` and `get_run_actions`.
 
 ### 2. Safe edit workflow
 
@@ -76,15 +78,16 @@ Use this when the user asks for a flow change.
 Steps:
 
 1. Call `get_context`.
-2. Call `list_flows` and `select_flow` unless the target is already explicit and confirmed.
-3. Call `get_flow`.
-4. Plan the smallest possible change.
-5. Call `preview_flow_update`.
-6. Call `validate_flow` on the candidate flow before save when possible.
-7. Call `apply_flow_update`.
-8. Call `get_last_update`.
-9. Ask the user to refresh the tab, or review the saved change in the extension `Review` workspace before continuing.
-10. If the change looks wrong, call `revert_last_update`.
+2. If multiple Power Automate tabs are open, call `list_captured_tabs` and `select_work_tab` first.
+3. Call `list_flows` and `select_flow` unless the target is already explicit and confirmed.
+4. Call `get_flow`.
+5. Plan the smallest possible change.
+6. Call `preview_flow_update`.
+7. Call `validate_flow` on the candidate flow before save when possible.
+8. Call `apply_flow_update`.
+9. Call `get_last_update`.
+10. Ask the user to refresh the tab, or review the saved change in the extension `Review` workspace before continuing.
+11. If the change looks wrong, call `revert_last_update`.
 
 ### 3. Manual trigger test workflow
 
@@ -93,13 +96,14 @@ Use this when the flow has a trigger that supports callback invocation.
 Steps:
 
 1. Call `get_flow` and confirm the trigger is manual/request based.
-2. If needed, call `list_flows` and `select_flow` first.
-3. Call `get_trigger_callback_url`.
-4. Call `invoke_trigger` with a controlled test payload.
-5. Call `wait_for_run`.
-6. Call `get_run` and `get_run_actions`.
-7. Summarize whether the run succeeded and which actions were executed.
-8. If the flow response payload matters, report the callback response body too.
+2. If multiple Power Automate tabs are open, call `list_captured_tabs` and `select_work_tab` first.
+3. If needed, call `list_flows` and `select_flow` first.
+4. Call `get_trigger_callback_url`.
+5. Call `invoke_trigger` with a controlled test payload.
+6. Call `wait_for_run`.
+7. Call `get_run` and `get_run_actions`.
+8. Summarize whether the run succeeded and which actions were executed.
+9. If the flow response payload matters, report the callback response body too.
 
 ### 4. Production-ish verification workflow
 
@@ -117,6 +121,8 @@ Steps:
 ## Tool quick reference
 
 - `get_context`
+- `list_captured_tabs`
+- `select_work_tab`
 - `get_status`
   Confirms the selected target flow, current tab flow, environment, and whether legacy access is available.
 
@@ -135,7 +141,7 @@ Steps:
 
 - `select_tab_flow`
 - `set_active_flow_from_tab`
-  Re-targets the MCP to the flow currently open in the captured browser tab.
+  Re-targets the MCP to the flow currently open in the selected work tab.
 
 - `get_active_flow`
   Returns both the selected target flow and the current tab flow.
@@ -150,12 +156,16 @@ Steps:
   Clones an existing flow and can optionally make the clone the active target.
 
 - `validate_flow`
-- `preview_flow_update`
-- `apply_flow_update`
   Uses the legacy flow API to validate the current definition.
 
+- `preview_flow_update`
+  Computes the proposed diff and review summary without saving.
+
+- `apply_flow_update`
+  Saves a modified flow definition and returns the persisted review diff.
+
 - `update_flow`
-  Saves a modified flow definition.
+  Compatibility alias for applying a modified flow definition directly.
 
 - `get_last_update`
   Returns before/after info for the latest save.
@@ -226,7 +236,7 @@ If the MCP looks installed but tools do not appear or the session behaves incons
 1. Check the local bridge health at `http://127.0.0.1:17373/health`.
 2. Confirm the browser extension shows the expected selected target flow and current browser flow.
 3. Open the side panel `System` section when you need environment, capture, token, or bridge details.
-4. If needed, use `select_tab_flow` or the extension quick action to lock the current tab as the target.
+4. If needed, use `select_work_tab` to choose the correct work tab first, then `select_tab_flow` if you also want the target flow to follow that tab.
 5. Refresh the Power Automate tab after reloading the extension.
 6. If port `17373` is busy, prefer reusing the healthy bridge instead of starting another manual copy.
 7. If the bridge is unhealthy, stop the stale process and start a fresh session.

@@ -13,6 +13,7 @@ type DashboardMessageAction =
   | 'refresh-last-run'
   | 'resend-session'
   | 'revert-last-update'
+  | 'select-work-tab'
   | 'set-active-flow-from-tab';
 
 export type DashboardAction =
