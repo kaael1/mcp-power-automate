@@ -321,7 +321,7 @@ const buildAttentionItems = ({
 };
 
 export const deriveDashboardModel = (payload: DashboardPayload, locale: Locale = 'en'): DashboardModel => {
-  const status = payload.status;
+  const status = (payload.status || {}) as NonNullable<DashboardPayload['status']>;
   const context = status.context?.context || null;
   const flowCatalog = payload.flowCatalog;
   const catalogFlows = flowCatalog?.flows || [];
