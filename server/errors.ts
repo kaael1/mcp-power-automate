@@ -9,6 +9,13 @@ export type PowerAutomateErrorCode =
   | 'CALLBACK_URL_MISSING'
   | 'INVALID_REQUEST'
   | 'STORE_CORRUPTED'
+  | 'BAP_TOKEN_MISSING'
+  | 'DATAVERSE_TOKEN_MISSING'
+  | 'DATAVERSE_INSTANCE_NOT_FOUND'
+  | 'PUBLISHER_NOT_FOUND'
+  | 'SOLUTION_NOT_FOUND'
+  | 'ENV_VAR_NOT_FOUND'
+  | 'INVALID_UNIQUE_NAME'
   | 'UNKNOWN';
 
 export interface PowerAutomateErrorPayload {

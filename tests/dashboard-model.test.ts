@@ -342,6 +342,7 @@ describe('dashboard model', () => {
         context: {
           context: {
             capabilities: {
+              canManageSolutions: { available: false, reason: null, reasonCode: null },
               canReadFlow: { available: true, reason: null, reasonCode: null },
               canReadFlows: { available: true, reason: null, reasonCode: null },
               canReadRuns: { available: true, reason: null, reasonCode: null },

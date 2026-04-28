@@ -20,6 +20,7 @@ import type {
 } from './bridge-types.js';
 import { getActiveTarget, loadActiveTarget, saveActiveTarget } from './active-target-store.js';
 import { listCapturedSessions, loadCapturedSessions, removeCapturedSession, upsertCapturedSession } from './captured-sessions-store.js';
+import { loadDataverseOrgMap } from './dataverse-org-store.js';
 import { loadFlowCatalog } from './flow-catalog-store.js';
 import { getFlowSnapshot, loadFlowSnapshot, saveFlowSnapshot } from './flow-snapshot-store.js';
 import {
@@ -460,6 +461,7 @@ const main = async () => {
   await loadLastRun();
   await loadTokenAudit();
   await loadLastUpdate();
+  await loadDataverseOrgMap();
   await ensureBridgeServer();
 
   const transport = new StdioServerTransport();

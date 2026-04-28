@@ -44,6 +44,7 @@ import type {
   WaitForRunInput,
 } from './schemas.js';
 import { editorSchema } from './schemas.js';
+import { hasManageSolutionsTokens } from './dataverse-client.js';
 import { PowerAutomateSessionError } from './errors.js';
 import { getSession } from './session-store.js';
 import { getSelectedWorkTab, saveSelectedWorkTab } from './selected-work-tab-store.js';
@@ -1079,8 +1080,29 @@ export const getContext = ({ bridgeMode = 'owned' }: { bridgeMode?: BridgeMode }
   const noSessionCode: CapabilityReasonCode = hasStoreCorruption ? 'STORE_CORRUPTED' : 'NO_SESSION';
   const noTargetReason = 'Select a flow or sync the current browser tab before running target-specific actions.';
 
+  const manageEnvId = session?.envId || resolvedTarget?.envId || null;
+  const manageSolutionsStatus = hasManageSolutionsTokens(manageEnvId);
+  const manageSolutionsReasonByCode: Record<string, string> = {
+    NO_SESSION: noSessionReason,
+    BAP_TOKEN_MISSING:
+      'No BAP-audience token captured. Open https://make.powerapps.com/environments/' +
+      (manageEnvId || '<envId>') +
+      ' with the extension enabled to mint one.',
+    DATAVERSE_TOKEN_MISSING:
+      "No Dataverse-audience token captured. Open the org's model-driven app or visit the solutions page in make.powerapps.com so the extension can capture a Dataverse token.",
+  };
+
   return {
     capabilities: {
+      canManageSolutions: createCapabilityStatus(
+        manageSolutionsStatus.available ?
+          { available: true }
+        : {
+            available: false,
+            reason: manageSolutionsStatus.reasonCode ? manageSolutionsReasonByCode[manageSolutionsStatus.reasonCode] : null,
+            reasonCode: manageSolutionsStatus.reasonCode,
+          },
+      ),
       canReadFlow: createCapabilityStatus(
         session && resolvedTarget ?
           { available: true }

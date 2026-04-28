@@ -253,6 +253,18 @@ export const invokeTriggerInputSchema = z.object({
   triggerName: z.string().trim().min(1).optional(),
 });
 
+export const dataverseOrgRecordSchema = z.object({
+  envId: envIdSchema,
+  instanceApiUrl: baseUrlSchema,
+  instanceUrl: baseUrlSchema,
+  resolvedAt: z.string().trim().min(1, 'resolvedAt is required'),
+  uniqueName: z.string().trim().min(1).optional(),
+});
+
+export const dataverseOrgMapSchema = z.object({
+  records: z.record(z.string(), dataverseOrgRecordSchema),
+});
+
 export type FlowId = z.infer<typeof flowIdSchema>;
 export type EnvId = z.infer<typeof envIdSchema>;
 export type SelectionSource = z.infer<typeof selectionSourceSchema>;
@@ -291,3 +303,5 @@ export type GetRunInput = z.infer<typeof getRunInputSchema>;
 export type WaitForRunInput = z.infer<typeof waitForRunInputSchema>;
 export type TriggerCallbackInput = z.infer<typeof triggerCallbackInputSchema>;
 export type InvokeTriggerInput = z.infer<typeof invokeTriggerInputSchema>;
+export type DataverseOrgRecord = z.infer<typeof dataverseOrgRecordSchema>;
+export type DataverseOrgMap = z.infer<typeof dataverseOrgMapSchema>;

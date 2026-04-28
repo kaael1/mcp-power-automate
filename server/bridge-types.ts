@@ -2,6 +2,8 @@ import type { ActiveTarget, FlowSnapshot, LastRun, LastUpdate, Session, TokenAud
 
 export type BridgeMode = 'owned' | 'reused';
 export type CapabilityReasonCode =
+  | 'BAP_TOKEN_MISSING'
+  | 'DATAVERSE_TOKEN_MISSING'
   | 'LEGACY_TOKEN_MISSING'
   | 'NO_SESSION'
   | 'NO_TARGET'
@@ -18,6 +20,7 @@ export interface CapabilityStatus {
 }
 
 export interface PowerAutomateCapabilities {
+  canManageSolutions: CapabilityStatus;
   canReadFlow: CapabilityStatus;
   canReadFlows: CapabilityStatus;
   canReadRuns: CapabilityStatus;
