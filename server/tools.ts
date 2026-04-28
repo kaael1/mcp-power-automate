@@ -30,17 +30,29 @@ import {
   validateCurrentFlow,
   waitForRun,
 } from './power-automate-client.js';
+import {
+  addExistingToSolution,
+  createEnvironmentVariable,
+  createSolution,
+  listSolutions,
+  setEnvVarValue,
+} from './dataverse-solutions.js';
 import { toErrorPayload } from './errors.js';
 import {
+  addExistingToSolutionInputSchema,
   cloneFlowInputSchema,
+  createEnvironmentVariableInputSchema,
   createFlowInputSchema,
+  createSolutionInputSchema,
   getRunInputSchema,
   invokeTriggerInputSchema,
   listFlowsInputSchema,
   listRunsInputSchema,
+  listSolutionsInputSchema,
   optionalTargetInputSchema,
   selectWorkTabInputSchema,
   setActiveFlowInputSchema,
+  setEnvVarValueInputSchema,
   triggerCallbackInputSchema,
   updateFlowInputSchema,
   validateFlowInputSchema,
@@ -560,6 +572,86 @@ export const createMcpApp = () => {
     async ({ flow, target }) => {
       try {
         return createTextResult(await validateCurrentFlow({ flow, target }));
+      } catch (error) {
+        return createErrorResult(error);
+      }
+    },
+  );
+
+  server.registerTool(
+    'list_solutions',
+    {
+      description:
+        'List Power Platform solutions in the current Dataverse environment. Defaults to unmanaged + visible only; pass includeManaged: true to include managed solutions, or query to substring-match friendly names.',
+      inputSchema: listSolutionsInputSchema,
+    },
+    async (input) => {
+      try {
+        return createTextResult(await listSolutions(input || {}));
+      } catch (error) {
+        return createErrorResult(error);
+      }
+    },
+  );
+
+  server.registerTool(
+    'create_solution',
+    {
+      description:
+        'Create a new unmanaged Power Platform solution. uniqueName must start with a letter and use only letters/digits/underscores. publisherUniqueName must reference an existing publisher.',
+      inputSchema: createSolutionInputSchema,
+    },
+    async (input) => {
+      try {
+        return createTextResult(await createSolution(input));
+      } catch (error) {
+        return createErrorResult(error);
+      }
+    },
+  );
+
+  server.registerTool(
+    'create_environment_variable',
+    {
+      description:
+        'Create a Solution Environment Variable definition (and optionally an initial value) inside the named solution. schemaName must include a publisher prefix (e.g. "adres_FdHostADREC"). Type "secret" stores values in Azure Key Vault references rather than plain text.',
+      inputSchema: createEnvironmentVariableInputSchema,
+    },
+    async (input) => {
+      try {
+        return createTextResult(await createEnvironmentVariable(input));
+      } catch (error) {
+        return createErrorResult(error);
+      }
+    },
+  );
+
+  server.registerTool(
+    'set_env_var_value',
+    {
+      description:
+        'Set or update the current value of an existing solution environment variable by schemaName. If no value row exists yet, pass solutionUniqueName to create one in that solution.',
+      inputSchema: setEnvVarValueInputSchema,
+    },
+    async (input) => {
+      try {
+        return createTextResult(await setEnvVarValue(input));
+      } catch (error) {
+        return createErrorResult(error);
+      }
+    },
+  );
+
+  server.registerTool(
+    'add_existing_to_solution',
+    {
+      description:
+        'Add an existing Dataverse component (cloud flow / env var / connection reference / publisher) to a solution. componentType accepts "workflow" | "environmentVariableDefinition" | "environmentVariableValue" | "connectionReference" | "publisher" | "solution" or a numeric Dataverse component-type ID.',
+      inputSchema: addExistingToSolutionInputSchema,
+    },
+    async (input) => {
+      try {
+        return createTextResult(await addExistingToSolution(input));
       } catch (error) {
         return createErrorResult(error);
       }

@@ -26,8 +26,13 @@ const safeUrlHost = (value: string): string | null => {
   }
 };
 
-// Strips a leading "api." segment so api.crm.dynamics.com matches crm.dynamics.com.
-const normalizeOrgHost = (host: string) => host.replace(/^api\./, '').toLowerCase();
+// Strips an "api." segment (leading or embedded) so org URLs like
+// orgabc.api.crm.dynamics.com normalize to orgabc.crm.dynamics.com,
+// matching how the JWT aud claim is typically issued.
+const normalizeOrgHost = (host: string) =>
+  host
+    .toLowerCase()
+    .replace(/(^|\.)api\.(?=[^.]+\.[^.]+)/, '$1');
 
 const parseAudHost = (aud: string): string | null => {
   const trimmed = stripTrailingSlash(aud);

@@ -265,6 +265,82 @@ export const dataverseOrgMapSchema = z.object({
   records: z.record(z.string(), dataverseOrgRecordSchema),
 });
 
+const guidSchema = z
+  .string()
+  .trim()
+  .regex(/^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/, 'must be a GUID');
+
+export const dataverseUniqueNameSchema = z
+  .string()
+  .trim()
+  .regex(/^[A-Za-z][A-Za-z0-9_]*$/, 'must start with a letter and contain only letters, digits, and underscores');
+
+export const dataverseSchemaNameSchema = z
+  .string()
+  .trim()
+  .regex(/^[a-z]+_[A-Za-z][A-Za-z0-9_]*$/, 'must include a publisher prefix like "adres_..."');
+
+export const envVarTypeSchema = z.enum(['string', 'number', 'boolean', 'json', 'secret']);
+
+export const componentTypeSchema = z.union([
+  z.enum([
+    'workflow',
+    'environmentVariableDefinition',
+    'environmentVariableValue',
+    'connectionReference',
+    'publisher',
+    'solution',
+  ]),
+  z.number().int().nonnegative(),
+]);
+
+export const listSolutionsInputSchema = z.object({
+  envId: envIdSchema.optional(),
+  includeManaged: z.boolean().optional(),
+  query: z.string().trim().min(1).optional(),
+});
+
+export const createSolutionInputSchema = z.object({
+  envId: envIdSchema.optional(),
+  uniqueName: dataverseUniqueNameSchema,
+  friendlyName: z.string().trim().min(1, 'friendlyName is required'),
+  version: z
+    .string()
+    .trim()
+    .regex(/^\d+(\.\d+){0,3}$/, 'must be a 1-4 part dotted version, e.g. "1.0.0.0"')
+    .optional(),
+  description: z.string().trim().min(1).optional(),
+  publisherUniqueName: dataverseUniqueNameSchema,
+});
+
+export const createEnvironmentVariableInputSchema = z.object({
+  envId: envIdSchema.optional(),
+  solutionUniqueName: dataverseUniqueNameSchema,
+  schemaName: dataverseSchemaNameSchema,
+  displayName: z.string().trim().min(1, 'displayName is required'),
+  type: envVarTypeSchema,
+  defaultValue: z.string().optional(),
+  initialValue: z.string().optional(),
+  description: z.string().trim().min(1).optional(),
+  isRequired: z.boolean().optional(),
+});
+
+export const setEnvVarValueInputSchema = z.object({
+  envId: envIdSchema.optional(),
+  schemaName: dataverseSchemaNameSchema,
+  value: z.string(),
+  solutionUniqueName: dataverseUniqueNameSchema.optional(),
+});
+
+export const addExistingToSolutionInputSchema = z.object({
+  envId: envIdSchema.optional(),
+  solutionUniqueName: dataverseUniqueNameSchema,
+  componentId: guidSchema,
+  componentType: componentTypeSchema,
+  addRequiredComponents: z.boolean().optional(),
+  doNotIncludeSubcomponents: z.boolean().optional(),
+});
+
 export type FlowId = z.infer<typeof flowIdSchema>;
 export type EnvId = z.infer<typeof envIdSchema>;
 export type SelectionSource = z.infer<typeof selectionSourceSchema>;
@@ -305,3 +381,10 @@ export type TriggerCallbackInput = z.infer<typeof triggerCallbackInputSchema>;
 export type InvokeTriggerInput = z.infer<typeof invokeTriggerInputSchema>;
 export type DataverseOrgRecord = z.infer<typeof dataverseOrgRecordSchema>;
 export type DataverseOrgMap = z.infer<typeof dataverseOrgMapSchema>;
+export type EnvVarType = z.infer<typeof envVarTypeSchema>;
+export type ComponentType = z.infer<typeof componentTypeSchema>;
+export type ListSolutionsInput = z.infer<typeof listSolutionsInputSchema>;
+export type CreateSolutionInput = z.infer<typeof createSolutionInputSchema>;
+export type CreateEnvironmentVariableInput = z.infer<typeof createEnvironmentVariableInputSchema>;
+export type SetEnvVarValueInput = z.infer<typeof setEnvVarValueInputSchema>;
+export type AddExistingToSolutionInput = z.infer<typeof addExistingToSolutionInputSchema>;
