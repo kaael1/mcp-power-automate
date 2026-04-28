@@ -1,10 +1,10 @@
 {
-  "name": "@kaael1/mcp-power-automate",
-  "version": "0.4.1",
+  "name": "@mgabr90/mcp-power-automate",
+  "version": "0.5.0-alpha.1",
   "private": false,
   "type": "module",
-  "description": "Local MCP server and reusable skill bundle for Microsoft Power Automate with browser-backed auth, explicit flow targeting, validation, review diff, and rollback.",
-  "mcpName": "io.github.kaael1/mcp-power-automate",
+  "description": "Local MCP server and reusable skill bundle for Microsoft Power Automate with browser-backed auth, explicit flow targeting, validation, review diff, and rollback. Fork adds Power Platform Solutions and Environment Variable management via Dataverse Web API.",
+  "mcpName": "io.github.mgabr90/mcp-power-automate",
   "bin": {
     "mcp-power-automate": "dist/server/index.js"
   },
@@ -35,12 +35,12 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/kaael1/mcp-power-automate.git"
+    "url": "git+https://github.com/Mgabr90/mcp-power-automate.git"
   },
   "bugs": {
-    "url": "https://github.com/kaael1/mcp-power-automate/issues"
+    "url": "https://github.com/Mgabr90/mcp-power-automate/issues"
   },
-  "homepage": "https://github.com/kaael1/mcp-power-automate#readme",
+  "homepage": "https://github.com/Mgabr90/mcp-power-automate#readme",
   "license": "MIT",
   "keywords": [
     "automation",

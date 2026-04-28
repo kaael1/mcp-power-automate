@@ -1,20 +1,20 @@
 {
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
-  "description": "Local MCP for Power Automate with browser-backed auth, target locking, review diff, and rollback.",
-  "version": "0.4.1",
-  "name": "io.github.kaael1/mcp-power-automate",
+  "description": "Local MCP for Power Automate with browser-backed auth, target locking, review diff, and rollback. Fork adds Power Platform Solutions and Environment Variable management via Dataverse Web API.",
+  "version": "0.5.0-alpha.1",
+  "name": "io.github.mgabr90/mcp-power-automate",
   "packages": [
     {
       "registryType": "npm",
-      "identifier": "@kaael1/mcp-power-automate",
-      "version": "0.4.1",
+      "identifier": "@mgabr90/mcp-power-automate",
+      "version": "0.5.0-alpha.1",
       "transport": {
         "type": "stdio"
       }
     }
   ],
   "repository": {
-    "url": "https://github.com/kaael1/mcp-power-automate",
+    "url": "https://github.com/Mgabr90/mcp-power-automate",
     "source": "github"
   }
 }
