@@ -6,20 +6,9 @@ import { fetchBridgeHealthDirect, getDashboardPayload, openSidePanelDirect, send
 import type { Locale } from './i18n.js';
 import type { DashboardPayload, RuntimeMessage } from './types.js';
 
-type DashboardMessageAction =
-  | 'open-side-panel'
-  | 'refresh-current-tab'
-  | 'refresh-flows'
-  | 'refresh-last-run'
-  | 'resend-session'
-  | 'revert-last-update'
-  | 'select-work-tab'
-  | 'set-active-flow-from-tab';
+type DashboardMessageAction = 'open-side-panel';
 
-export type DashboardAction =
-  | { type: DashboardMessageAction }
-  | { flowId: string; type: 'set-active-flow' }
-  | { flowId: string; type: 'toggle-pinned-flow' };
+export type DashboardAction = { type: DashboardMessageAction };
 
 export type DashboardPhase =
   | { kind: 'loading' }

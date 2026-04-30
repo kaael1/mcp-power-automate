@@ -1,13 +1,13 @@
 {
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
-  "description": "Local MCP for Power Automate with browser-backed auth, target locking, review diff, and rollback.",
-  "version": "0.4.1",
+  "description": "Local MCP for AI-operated Power Automate flows with automatic browser-backed context, review diff, and rollback.",
+  "version": "1.0.0",
   "name": "io.github.kaael1/mcp-power-automate",
   "packages": [
     {
       "registryType": "npm",
       "identifier": "@kaael1/mcp-power-automate",
-      "version": "0.4.1",
+      "version": "1.0.0",
       "transport": {
         "type": "stdio"
       }

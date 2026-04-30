@@ -2,8 +2,17 @@
 
 ## Unreleased
 
-- Made the bundled `power-automate-mcp` skill more provider-neutral so the same `SKILL.md` bundle can be reused across Codex, LobeHub, and other skill-capable clients.
-- Added multi-provider distribution guidance covering one canonical skill bundle, thin provider adapters, and local-first marketplace positioning.
+## 1.0.0
+
+- Replaced the MCP tool registration with a v1 command registry shared by MCP tools and `/v1/commands/:name` bridge routes.
+- Added `doctor` and `connect_flow` as the primary readiness and targeting commands.
+- Removed compatibility aliases from the public MCP tool surface.
+- Made reused MCP instances proxy command execution to the bridge owner instead of keeping divergent local state.
+- Expanded bridge health with identity, version, PID, port, startup time, and blocked capability reason.
+- Made browser-captured flows part of catalog fallback so stale local catalogs do not block target connection.
+- Changed the extension into an automatic capture/status surface without operational sync or refresh buttons.
+- Added CLI helpers: `doctor`, `extension-path`, and `version`.
+- Updated README and skill guidance for the v1 npm-first install and automatic browser-backed workflow.
 
 ## 0.4.1
 

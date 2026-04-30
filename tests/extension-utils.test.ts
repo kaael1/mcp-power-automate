@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 
 import { dedupeFindings, extractTokenCandidates, scoreScopes, scoreToken } from '../extension/token-utils.js';
-import { buildBaseUrl, extractFromApiUrl, extractFromPortalUrl } from '../extension/url-utils.js';
+import { buildBaseUrl, extractBestFlowLocation, extractFromApiUrl, extractFromPortalUrl } from '../extension/url-utils.js';
 
 const encodeJwt = (payload: Record<string, unknown>) => {
   const base64 = Buffer.from(JSON.stringify(payload), 'utf8')
@@ -98,5 +98,19 @@ describe('extension helpers', () => {
     expect(buildBaseUrl('https://tenant.api.flow.microsoft.com/providers/test')).toBe(
       'https://tenant.api.flow.microsoft.com/',
     );
+  });
+
+  it('resolves flow context from parent/referrer URL candidates', () => {
+    expect(
+      extractBestFlowLocation([
+        'https://designer.powerapps.com/app/index.html',
+        'https://make.powerautomate.com/environments/Default-123/solutions/~preferred/flows/123e4567-e89b-12d3-a456-426614174000?v3=true',
+      ]),
+    ).toEqual({
+      envId: 'Default-123',
+      flowId: '123e4567-e89b-12d3-a456-426614174000',
+      portalUrl:
+        'https://make.powerautomate.com/environments/Default-123/solutions/~preferred/flows/123e4567-e89b-12d3-a456-426614174000?v3=true',
+    });
   });
 });

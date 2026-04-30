@@ -61,6 +61,8 @@ export const scoreToken = (bearerToken: string): TokenScore => {
   let score = scoreScopes(scopeText);
 
   if (payload?.aud === 'https://api.powerplatform.com') score += 50;
+  if ((payload?.aud || '').replace(/\/+$/, '').toLowerCase() === 'https://service.flow.microsoft.com') score += 700;
+  if ((payload?.aud || '').replace(/\/+$/, '').toLowerCase() === 'https://service.powerapps.com') score += 650;
 
   return {
     payload,
@@ -139,7 +141,10 @@ export const buildFinding = ({
   exp: payload.exp ?? null,
   hasFlowRead: scope.toLowerCase().includes('powerautomate.flow.read'),
   hasFlowWrite: scope.toLowerCase().includes('powerautomate.flow.write'),
-  score,
+  score:
+    score +
+    (payload.aud?.replace(/\/+$/, '').toLowerCase() === 'https://service.flow.microsoft.com' ? 700 : 0) +
+    (payload.aud?.replace(/\/+$/, '').toLowerCase() === 'https://service.powerapps.com' ? 650 : 0),
   scope,
   source,
   token,

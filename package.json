@@ -1,9 +1,9 @@
 {
   "name": "@kaael1/mcp-power-automate",
-  "version": "0.4.1",
+  "version": "1.0.0",
   "private": false,
   "type": "module",
-  "description": "Local MCP server and reusable skill bundle for Microsoft Power Automate with browser-backed auth, explicit flow targeting, validation, review diff, and rollback.",
+  "description": "Local MCP server and Chromium extension for AI-operated Microsoft Power Automate flows with automatic browser-backed context, validation, review diff, and rollback.",
   "mcpName": "io.github.kaael1/mcp-power-automate",
   "bin": {
     "mcp-power-automate": "dist/server/index.js"

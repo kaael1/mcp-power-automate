@@ -1,10 +1,14 @@
 {
   "manifest_version": 3,
   "name": "Power Automate MCP Bridge",
-  "description": "Captures the current Power Automate browser session and sends it to a local MCP bridge.",
-  "version": "0.4.1",
-  "permissions": ["storage", "tabs", "webRequest", "sidePanel"],
+  "description": "Automatically captures Power Automate browser context for the local MCP bridge.",
+  "version": "1.0.0",
+  "permissions": ["storage", "tabs", "webNavigation", "webRequest", "sidePanel", "scripting", "alarms"],
   "host_permissions": [
+    "*://*.powerautomate.com/*",
+    "*://*.powerapps.com/*",
+    "*://*.powerplatform.com/*",
+    "*://*.dynamics.com/*",
     "*://*.flow.microsoft.com/*",
     "*://*.make.powerautomate.com/*",
     "*://*.make.powerapps.com/*",
@@ -18,11 +22,16 @@
   "content_scripts": [
     {
       "matches": [
+        "*://*.powerautomate.com/*",
+        "*://*.powerapps.com/*",
+        "*://*.powerplatform.com/*",
+        "*://*.dynamics.com/*",
         "*://*.make.powerautomate.com/*",
         "*://*.flow.microsoft.com/*",
         "*://*.make.powerapps.com/*"
       ],
       "js": ["storage-capture.js"],
+      "all_frames": true,
       "run_at": "document_idle"
     }
   ],
@@ -30,6 +39,10 @@
     {
       "resources": ["page-probe.js"],
       "matches": [
+        "*://*.powerautomate.com/*",
+        "*://*.powerapps.com/*",
+        "*://*.powerplatform.com/*",
+        "*://*.dynamics.com/*",
         "*://*.make.powerautomate.com/*",
         "*://*.flow.microsoft.com/*",
         "*://*.make.powerapps.com/*"

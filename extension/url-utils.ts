@@ -3,6 +3,10 @@ export interface FlowLocation {
   flowId: string | null;
 }
 
+export interface FlowLocationWithPortal extends FlowLocation {
+  portalUrl: string | null;
+}
+
 export const extractAuthorization = (headers: Array<{ name: string; value?: string }> = []) => {
   const header = headers.find((item) => item.name.toLowerCase() === 'authorization');
   return header?.value || null;
@@ -37,6 +41,34 @@ export const extractFromPortalUrl = (portalUrl: string | null | undefined): Flow
   return {
     envId: envMatch?.[1] || null,
     flowId: flowMatch?.[1] || null,
+  };
+};
+
+export const extractBestFlowLocation = (urls: Array<string | null | undefined>): FlowLocationWithPortal => {
+  let envId: string | null = null;
+  let flowId: string | null = null;
+  let portalUrl: string | null = null;
+
+  for (const candidateUrl of urls) {
+    if (!candidateUrl) continue;
+
+    const parsed = extractFromPortalUrl(candidateUrl);
+    if (!parsed) {
+      if (!portalUrl) portalUrl = candidateUrl;
+      continue;
+    }
+
+    envId ||= parsed.envId;
+    flowId ||= parsed.flowId;
+    portalUrl = candidateUrl;
+
+    if (envId && flowId) break;
+  }
+
+  return {
+    envId,
+    flowId,
+    portalUrl,
   };
 };
 

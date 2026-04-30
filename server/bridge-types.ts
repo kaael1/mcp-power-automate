@@ -1,12 +1,15 @@
-import type { ActiveTarget, FlowSnapshot, LastRun, LastUpdate, Session, TokenAudit } from './schemas.js';
+import type { ActiveTarget, CaptureDiagnostic, FlowSnapshot, LastRun, LastUpdate, Session, TokenAudit } from './schemas.js';
 
 export type BridgeMode = 'owned' | 'reused';
 export type CapabilityReasonCode =
+  | 'AUTHENTICATION_FAILED'
+  | 'CONNECTION_AUTHORIZATION_FAILED'
   | 'LEGACY_TOKEN_MISSING'
   | 'NO_SESSION'
   | 'NO_TARGET'
   | 'SESSION_READY'
   | 'STORE_CORRUPTED'
+  | 'TARGET_AMBIGUOUS'
   | 'TARGET_READY';
 
 export type StoreState = 'corrupted' | 'migrated' | 'missing' | 'ok';
@@ -72,6 +75,7 @@ export interface PowerAutomateContext {
     envId: string | null;
     lastRunCapturedAt: string | null;
     lastUpdateCapturedAt: string | null;
+    latestCaptureDiagnostic: CaptureDiagnostic | null;
     legacySource: string | null;
     snapshotCapturedAt: string | null;
     storeHealth: {
@@ -92,6 +96,7 @@ export interface PowerAutomateContext {
 
 export interface HealthPayload {
   activeTarget: ActiveTarget | null;
+  blockedReason: CapabilityStatus | null;
   capturedAt: string | null;
   bridgeMode: BridgeMode;
   currentTabFlowId: string | null;
@@ -102,11 +107,17 @@ export interface HealthPayload {
   hasSession: boolean;
   hasSnapshot: boolean;
   hasTokenAudit: boolean;
+  latestCaptureDiagnostic: CaptureDiagnostic | null;
+  instanceId: string;
   lastRunCapturedAt: string | null;
   lastUpdateCapturedAt: string | null;
   ok: true;
+  pid: number;
+  port: number;
   snapshotCapturedAt: string | null;
+  startedAt: string;
   tokenAuditCapturedAt: string | null;
+  version: string;
 }
 
 export interface ContextPayload {
@@ -183,6 +194,7 @@ export interface RevertLastUpdateResponse {
 }
 
 export interface BridgeErrorResponse {
+  blockedByUserAction?: boolean;
   code?: string;
   details?: unknown;
   error: string;

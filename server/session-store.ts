@@ -50,8 +50,9 @@ const syncLegacyMirror = async (session: Session | null) => {
 const hydrateActiveSession = async () => {
   const selectedWorkTab = getSelectedWorkTab();
   const selectedCapturedSession = selectedWorkTab ? getCapturedSession(selectedWorkTab.tabId) : null;
+  const fallbackCapturedSession = listCapturedSessions()[0] || null;
 
-  activeSession = toSession(selectedCapturedSession);
+  activeSession = toSession(selectedCapturedSession || fallbackCapturedSession);
   if (activeSession) {
     await syncLegacyMirror(activeSession);
   }
@@ -94,7 +95,8 @@ export const getSessionFilePath = () => getLegacySessionFilePath();
 export const getSession = () => {
   const selectedWorkTab = getSelectedWorkTab();
   const selectedCapturedSession = selectedWorkTab ? getCapturedSession(selectedWorkTab.tabId) : null;
-  activeSession = toSession(selectedCapturedSession);
+  const fallbackCapturedSession = listCapturedSessions()[0] || null;
+  activeSession = toSession(selectedCapturedSession || fallbackCapturedSession);
   return activeSession;
 };
 

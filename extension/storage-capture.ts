@@ -1,5 +1,6 @@
 import { BRIDGE_SIGNAL, type RuntimeMessage } from './types.js';
 import { buildFinding, decodeJwtPayload, dedupeFindings, extractTokenCandidates, scoreScopes } from './token-utils.js';
+import { extractBestFlowLocation } from './url-utils.js';
 
 declare global {
   interface Window {
@@ -7,11 +8,36 @@ declare global {
   }
 }
 
+(() => {
 let extensionContextAlive = true;
 let deepScanTimer: number | null = null;
 let refreshTimer: number | null = null;
 let locationWatchTimer: number | null = null;
 let lastObservedUrl = window.location.href;
+
+const getFrameUrlCandidates = () => {
+  const candidates = [window.location.href, document.referrer];
+
+  try {
+    if (window.parent && window.parent !== window) {
+      candidates.push(window.parent.location.href);
+    }
+  } catch {
+    // Cross-origin frames can still expose the parent URL through document.referrer.
+  }
+
+  try {
+    if (window.top && window.top !== window) {
+      candidates.push(window.top.location.href);
+    }
+  } catch {
+    // Cross-origin top frames can still expose the parent URL through document.referrer.
+  }
+
+  return candidates;
+};
+
+const getCurrentContext = () => extractBestFlowLocation(getFrameUrlCandidates());
 
 const isContextInvalidatedError = (error: unknown) =>
   error instanceof Error && /Extension context invalidated/i.test(error.message);
@@ -56,6 +82,35 @@ const safeSendMessage = async (message: RuntimeMessage) => {
     markContextInvalidated(error);
     return null;
   }
+};
+
+const reportDiagnostic = async ({
+  details,
+  message,
+  stage,
+  status = 'ok',
+}: {
+  details?: Record<string, unknown>;
+  message?: string;
+  stage: string;
+  status?: 'error' | 'ok' | 'warning';
+}) => {
+  const context = getCurrentContext();
+  await safeSendMessage({
+    payload: {
+      capturedAt: new Date().toISOString(),
+      details,
+      envId: context.envId || undefined,
+      flowId: context.flowId || undefined,
+      message,
+      portalUrl: context.portalUrl || undefined,
+      source: 'storage-capture',
+      stage,
+      status,
+    },
+    source: BRIDGE_SIGNAL,
+    type: 'capture-diagnostics',
+  } satisfies RuntimeMessage);
 };
 
 const inspectStorage = (storage: Storage, storageName: string) => {
@@ -173,20 +228,44 @@ const reportBestToken = async ({ includeIndexedDb = false }: { includeIndexedDb?
       ...(includeIndexedDb ? await inspectIndexedDb() : []),
     ]);
 
-    if (findings.length === 0) return;
+    if (findings.length === 0) {
+      await reportDiagnostic({
+        details: {
+          includeIndexedDb,
+        },
+        message: 'Storage token scan completed without token candidates.',
+        stage: 'storage-scan',
+        status: 'warning',
+      });
+      return;
+    }
 
     findings.sort((left, right) => (right.score || 0) - (left.score || 0));
     const best = findings[0];
 
     if (!best) return;
 
+    await reportDiagnostic({
+      details: {
+        bestAudience: best.aud,
+        bestScore: best.score,
+        bestSource: best.source,
+        candidateCount: findings.length,
+        includeIndexedDb,
+        topAudiences: [...new Set(findings.slice(0, 10).map((finding) => finding.aud))],
+      },
+      message: 'Storage token scan captured token candidates.',
+      stage: 'storage-scan',
+    });
+
+    const context = getCurrentContext();
     await safeSendMessage({
       payload: {
         candidates: findings.slice(0, 50),
         capturedAt: new Date().toISOString(),
-        envId: window.location.href.match(/environments\/([a-zA-Z0-9-]+)/i)?.[1],
-        flowId: window.location.href.match(/flows\/(?:shared\/)?([0-9a-f-]{36})/i)?.[1],
-        portalUrl: window.location.href,
+        envId: context.envId || undefined,
+        flowId: context.flowId || undefined,
+        portalUrl: context.portalUrl || undefined,
         source: 'browser-storage',
       },
       source: BRIDGE_SIGNAL,
@@ -200,8 +279,15 @@ const reportBestToken = async ({ includeIndexedDb = false }: { includeIndexedDb?
       token: best.token,
       type: 'token-from-storage',
     } satisfies RuntimeMessage);
-  } catch {
-    // Ignore storage capture failures; request interception is still the primary path.
+  } catch (error) {
+    await reportDiagnostic({
+      details: {
+        includeIndexedDb,
+      },
+      message: error instanceof Error ? error.message : String(error),
+      stage: 'storage-scan',
+      status: 'error',
+    });
   }
 };
 
@@ -270,6 +356,16 @@ window.addEventListener('beforeunload', cleanupRuntimeHooks, { once: true });
 window.addEventListener('popstate', handleLocationChange);
 window.addEventListener('hashchange', handleLocationChange);
 
+void reportDiagnostic({
+  details: {
+    href: window.location.href,
+    isTopFrame: window.top === window,
+    matchedPortalUrl: getCurrentContext().portalUrl,
+    referrer: document.referrer || null,
+  },
+  message: 'Content script started.',
+  stage: 'content-script-start',
+});
 void reportBestToken();
 injectProbe();
 scheduleDeepScan();
@@ -279,3 +375,4 @@ refreshTimer = window.setInterval(() => {
   void reportBestToken();
 }, 30000);
 locationWatchTimer = window.setInterval(handleLocationChange, 1000);
+})();

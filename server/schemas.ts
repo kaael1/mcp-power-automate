@@ -15,6 +15,17 @@ export const targetRefSchema = z.object({
   flowId: flowIdSchema,
 });
 
+export const connectFlowInputSchema = z
+  .object({
+    envId: envIdSchema.optional(),
+    flowId: flowIdSchema.optional(),
+    nameQuery: z.string().trim().min(1).optional(),
+    tabId: z.number().int().nonnegative().optional(),
+  })
+  .refine((value) => Boolean(value.flowId || value.nameQuery || typeof value.tabId === 'number'), {
+    message: 'Provide flowId, nameQuery, or tabId.',
+  });
+
 export const sessionSchema = z.object({
   apiToken: tokenSchema,
   apiUrl: baseUrlSchema,
@@ -109,6 +120,20 @@ export const tokenAuditSchema = z.object({
   flowId: flowIdSchema.optional(),
   portalUrl: z.string().url().optional(),
   source: z.string().trim().min(1, 'source is required'),
+});
+
+export const captureDiagnosticSchema = z.object({
+  capturedAt: z.string().trim().min(1, 'capturedAt is required'),
+  details: z.record(z.string(), z.unknown()).optional(),
+  envId: envIdSchema.optional(),
+  flowId: flowIdSchema.optional(),
+  message: z.string().trim().min(1).optional(),
+  portalUrl: z.string().url().optional(),
+  source: z.string().trim().min(1, 'source is required'),
+  stage: z.string().trim().min(1, 'stage is required'),
+  status: z.enum(['error', 'ok', 'warning']),
+  frameId: z.number().int().optional(),
+  tabId: z.number().int().nonnegative().optional(),
 });
 
 export const normalizedFlowSchema = z.object({
@@ -257,6 +282,7 @@ export type FlowId = z.infer<typeof flowIdSchema>;
 export type EnvId = z.infer<typeof envIdSchema>;
 export type SelectionSource = z.infer<typeof selectionSourceSchema>;
 export type TargetRef = z.infer<typeof targetRefSchema>;
+export type ConnectFlowInput = z.infer<typeof connectFlowInputSchema>;
 export type Session = z.infer<typeof sessionSchema>;
 export type CapturedSession = z.infer<typeof capturedSessionSchema>;
 export type SelectedWorkTab = z.infer<typeof selectedWorkTabSchema>;
@@ -269,6 +295,7 @@ export type ValidateFlowInput = z.infer<typeof validateFlowInputSchema>;
 export type FlowSnapshot = z.infer<typeof flowSnapshotSchema>;
 export type TokenCandidate = z.infer<typeof tokenCandidateSchema>;
 export type TokenAudit = z.infer<typeof tokenAuditSchema>;
+export type CaptureDiagnostic = z.infer<typeof captureDiagnosticSchema>;
 export type NormalizedFlow = z.infer<typeof normalizedFlowSchema>;
 export type UpdateSummary = z.infer<typeof updateSummarySchema>;
 export type ReviewSectionId = z.infer<typeof reviewSectionIdSchema>;

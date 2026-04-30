@@ -1,9 +1,11 @@
 #!/usr/bin/env node
 import http, { type IncomingMessage, type Server, type ServerResponse } from 'node:http';
+import path from 'node:path';
 
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { ZodError } from 'zod';
 
+import { commandDefinitions, executeCommand, getCommandDefinition } from './command-registry.js';
 import type {
   BridgeErrorResponse,
   CapturedSessionsPayload,
@@ -19,9 +21,10 @@ import type {
   TokenAuditResponse,
 } from './bridge-types.js';
 import { getActiveTarget, loadActiveTarget, saveActiveTarget } from './active-target-store.js';
+import { getLatestCaptureDiagnostic, getLatestCaptureDiagnosticForFlow, loadCaptureDiagnostics, saveCaptureDiagnostic } from './capture-diagnostics-store.js';
 import { listCapturedSessions, loadCapturedSessions, removeCapturedSession, upsertCapturedSession } from './captured-sessions-store.js';
 import { loadFlowCatalog } from './flow-catalog-store.js';
-import { getFlowSnapshot, loadFlowSnapshot, saveFlowSnapshot } from './flow-snapshot-store.js';
+import { getFlowSnapshot, getFlowSnapshotForFlow, loadFlowSnapshot, saveFlowSnapshot } from './flow-snapshot-store.js';
 import {
   getActiveFlow,
   getContextPayload,
@@ -38,13 +41,16 @@ import {
 } from './power-automate-client.js';
 import { toErrorPayload } from './errors.js';
 import { getLastRun, loadLastRun } from './last-run-store.js';
-import { bridgeHost, bridgePort, capturedSessionSchema, flowIdSchema, flowSnapshotSchema, selectWorkTabInputSchema, sessionSchema, tokenAuditSchema } from './schemas.js';
+import { getPackageRoot } from './runtime-paths.js';
+import { bridgeHost, bridgePort, capturedSessionSchema, captureDiagnosticSchema, flowIdSchema, flowSnapshotSchema, selectWorkTabInputSchema, sessionSchema, tokenAuditSchema } from './schemas.js';
 import { getSession, loadSession, saveSession } from './session-store.js';
 import { clearSelectedWorkTab, getSelectedWorkTab, loadSelectedWorkTab, saveSelectedWorkTab } from './selected-work-tab-store.js';
 import { getTokenAudit, loadTokenAudit, saveTokenAudit } from './token-audit-store.js';
 import { hasLegacyCompatibleToken } from './token-compat.js';
 import { createMcpApp } from './tools.js';
+import { getBridgeRuntimeInfo, setBridgeMode } from './runtime-state.js';
 import { getLastUpdate, loadLastUpdate } from './update-history-store.js';
+import { packageVersion } from './version.js';
 
 const mcpServer = createMcpApp();
 let ownsBridgeServer = false;
@@ -79,6 +85,7 @@ const toBridgeErrorResponse = (error: unknown): BridgeErrorResponse => {
   const payload = toErrorPayload(error);
 
   return {
+    blockedByUserAction: payload.blockedByUserAction,
     code: payload.code,
     details: payload.details,
     error: payload.message,
@@ -86,14 +93,17 @@ const toBridgeErrorResponse = (error: unknown): BridgeErrorResponse => {
   };
 };
 
+const normalizeAudience = (audience: unknown) =>
+  typeof audience === 'string' ? audience.replace(/\/+$/, '').toLowerCase() : '';
+
 const hasLegacyTokenAuditCandidate = () => {
   const tokenAudit = getTokenAudit();
 
   return Boolean(
     tokenAudit?.candidates?.some(
       (candidate) =>
-        candidate.aud === 'https://service.flow.microsoft.com/' ||
-        candidate.aud === 'https://service.powerapps.com/',
+        normalizeAudience(candidate.aud) === 'https://service.flow.microsoft.com' ||
+        normalizeAudience(candidate.aud) === 'https://service.powerapps.com',
     ),
   );
 };
@@ -112,9 +122,34 @@ export const createHealthPayload = (): HealthPayload => {
   const tokenAudit = getTokenAudit();
   const lastUpdate = getLastUpdate();
   const activeTarget = getActiveTarget(session?.envId);
+  const runtime = getBridgeRuntimeInfo();
+  const context = getContextPayload({ bridgeMode: ownsBridgeServer ? 'owned' : 'reused' }).context;
+  const targetSnapshot =
+    context.selection.resolvedTarget?.envId && context.selection.resolvedTarget.flowId ?
+      getFlowSnapshotForFlow({
+        envId: context.selection.resolvedTarget.envId,
+        flowId: context.selection.resolvedTarget.flowId,
+      })
+    : snapshot;
+  const latestCaptureDiagnostic =
+    context.selection.resolvedTarget?.envId && context.selection.resolvedTarget.flowId ?
+      getLatestCaptureDiagnosticForFlow({
+        envId: context.selection.resolvedTarget.envId,
+        flowId: context.selection.resolvedTarget.flowId,
+      }) || getLatestCaptureDiagnostic()
+    : getLatestCaptureDiagnostic();
+  const blockedReason =
+    [
+      context.capabilities.canReadFlows,
+      context.capabilities.canReadFlow,
+      context.capabilities.canUseLegacyApi,
+      context.capabilities.canValidateFlow,
+      context.capabilities.canUpdateFlow,
+    ].find((capability) => !capability.available) || null;
 
   return {
     activeTarget,
+    blockedReason,
     capturedAt: session?.capturedAt || null,
     bridgeMode: ownsBridgeServer ? 'owned' : 'reused',
     currentTabFlowId: session?.flowId || null,
@@ -122,14 +157,20 @@ export const createHealthPayload = (): HealthPayload => {
     hasLegacyApi: hasLegacyCompatibleAccess(session),
     hasLastUpdate: Boolean(lastUpdate),
     hasLastRun: Boolean(lastRun?.run),
-    hasSnapshot: Boolean(snapshot),
+    hasSnapshot: Boolean(targetSnapshot),
     hasSession: Boolean(session),
     hasTokenAudit: Boolean(tokenAudit),
+    latestCaptureDiagnostic,
+    instanceId: runtime.instanceId,
     lastUpdateCapturedAt: lastUpdate?.capturedAt || null,
     lastRunCapturedAt: lastRun?.capturedAt || null,
     ok: true,
-    snapshotCapturedAt: snapshot?.capturedAt || null,
+    pid: runtime.pid,
+    port: runtime.port,
+    snapshotCapturedAt: targetSnapshot?.capturedAt || null,
+    startedAt: runtime.startedAt,
     tokenAuditCapturedAt: tokenAudit?.capturedAt || null,
+    version: runtime.version,
   };
 };
 
@@ -142,23 +183,48 @@ export const createBridgeServer = () =>
       }
 
       const requestUrl = new URL(request.url, `http://${bridgeHost}:${bridgePort}`);
+      const isV1 = requestUrl.pathname === '/v1' || requestUrl.pathname.startsWith('/v1/');
+      const normalizedPath = isV1 ? requestUrl.pathname.replace(/^\/v1(?=\/|$)/, '') || '/' : requestUrl.pathname;
 
       if (request.method === 'OPTIONS') {
         sendJson(response, 204, { ok: true });
         return;
       }
 
-      if (request.method === 'GET' && requestUrl.pathname === '/health') {
+      if (request.method === 'GET' && (requestUrl.pathname === '/health' || requestUrl.pathname === '/v1/health')) {
         sendJson(response, 200, createHealthPayload());
         return;
       }
 
-      if (request.method === 'GET' && requestUrl.pathname === '/context') {
-        sendJson(response, 200, getContextPayload({ bridgeMode: ownsBridgeServer ? 'owned' : 'reused' }) satisfies ContextPayload);
+      if (request.method === 'GET' && requestUrl.pathname === '/v1/commands') {
+        sendJson(response, 200, {
+          commands: commandDefinitions.map(({ description, name, risk }) => ({ description, name, risk })),
+          ok: true,
+        });
         return;
       }
 
-      if (request.method === 'GET' && requestUrl.pathname === '/captured-sessions') {
+      if (request.method === 'POST' && requestUrl.pathname.startsWith('/v1/commands/')) {
+        const commandName = decodeURIComponent(requestUrl.pathname.replace('/v1/commands/', ''));
+        if (!getCommandDefinition(commandName)) {
+          sendJson(response, 404, { code: 'INVALID_REQUEST', error: `Unknown command: ${commandName}`, retryable: false } satisfies BridgeErrorResponse);
+          return;
+        }
+
+        const body = await readJsonBody(request);
+        sendJson(response, 200, {
+          ok: true,
+          result: await executeCommand(commandName, body, { local: true }),
+        });
+        return;
+      }
+
+      if (request.method === 'GET' && normalizedPath === '/context') {
+        sendJson(response, 200, (await executeCommand('get_context', {}, { local: true })) as ContextPayload);
+        return;
+      }
+
+      if (request.method === 'GET' && normalizedPath === '/captured-sessions') {
         sendJson(response, 200, {
           ok: true,
           selectedTabId: getSelectedWorkTab()?.tabId || null,
@@ -167,7 +233,7 @@ export const createBridgeServer = () =>
         return;
       }
 
-      if (request.method === 'GET' && requestUrl.pathname === '/last-update') {
+      if (request.method === 'GET' && normalizedPath === '/last-update') {
         sendJson(response, 200, {
           lastUpdate: getLastUpdateSummary(),
           ok: true,
@@ -175,7 +241,7 @@ export const createBridgeServer = () =>
         return;
       }
 
-      if (request.method === 'GET' && requestUrl.pathname === '/last-run') {
+      if (request.method === 'GET' && normalizedPath === '/last-run') {
         sendJson(response, 200, {
           lastRun: getLastRunSummary(),
           ok: true,
@@ -183,7 +249,7 @@ export const createBridgeServer = () =>
         return;
       }
 
-      if (request.method === 'POST' && requestUrl.pathname === '/session') {
+      if (request.method === 'POST' && normalizedPath === '/session') {
         const body = await readJsonBody(request);
         const session = sessionSchema.parse(body);
         const savedSession = await saveSession(session);
@@ -209,7 +275,7 @@ export const createBridgeServer = () =>
         return;
       }
 
-      if (request.method === 'POST' && requestUrl.pathname === '/captured-session') {
+      if (request.method === 'POST' && normalizedPath === '/captured-session') {
         const body = await readJsonBody(request);
         const capturedSession = capturedSessionSchema.parse(body);
         const savedSession = await upsertCapturedSession(capturedSession);
@@ -244,7 +310,7 @@ export const createBridgeServer = () =>
         return;
       }
 
-      if (request.method === 'POST' && requestUrl.pathname === '/captured-session/remove') {
+      if (request.method === 'POST' && normalizedPath === '/captured-session/remove') {
         const body = await readJsonBody(request);
         const parsed = selectWorkTabInputSchema.parse(body);
         const selectedWorkTab = getSelectedWorkTab();
@@ -258,7 +324,7 @@ export const createBridgeServer = () =>
         return;
       }
 
-      if (request.method === 'POST' && requestUrl.pathname === '/snapshot') {
+      if (request.method === 'POST' && normalizedPath === '/snapshot') {
         const body = await readJsonBody(request);
         const snapshot = flowSnapshotSchema.parse(body);
         const savedSnapshot = await saveFlowSnapshot(snapshot);
@@ -272,7 +338,7 @@ export const createBridgeServer = () =>
         return;
       }
 
-      if (request.method === 'POST' && requestUrl.pathname === '/token-audit') {
+      if (request.method === 'POST' && normalizedPath === '/token-audit') {
         const body = await readJsonBody(request);
         const audit = tokenAuditSchema.parse(body);
         const savedAudit = await saveTokenAudit(audit);
@@ -286,7 +352,7 @@ export const createBridgeServer = () =>
         return;
       }
 
-      if (request.method === 'GET' && requestUrl.pathname === '/flows') {
+      if (request.method === 'GET' && normalizedPath === '/flows') {
         sendJson(response, 200, {
           flows: await listFlows({ limit: 200 }),
           ok: true,
@@ -294,7 +360,7 @@ export const createBridgeServer = () =>
         return;
       }
 
-      if (request.method === 'POST' && requestUrl.pathname === '/refresh-flows') {
+      if (request.method === 'POST' && normalizedPath === '/refresh-flows') {
         sendJson(response, 200, {
           flows: await refreshFlows(),
           ok: true,
@@ -302,7 +368,7 @@ export const createBridgeServer = () =>
         return;
       }
 
-      if (request.method === 'GET' && requestUrl.pathname === '/active-flow') {
+      if (request.method === 'GET' && normalizedPath === '/active-flow') {
         sendJson(response, 200, {
           activeFlow: await getActiveFlow(),
           ok: true,
@@ -310,7 +376,7 @@ export const createBridgeServer = () =>
         return;
       }
 
-      if (request.method === 'POST' && requestUrl.pathname === '/active-flow') {
+      if (request.method === 'POST' && normalizedPath === '/active-flow') {
         const body = await readJsonBody(request);
         const flowId = flowIdSchema.parse((body as { flowId?: string }).flowId);
         sendJson(response, 200, {
@@ -320,7 +386,21 @@ export const createBridgeServer = () =>
         return;
       }
 
-      if (request.method === 'POST' && requestUrl.pathname === '/active-flow/from-tab') {
+      if (request.method === 'POST' && normalizedPath === '/capture-diagnostics') {
+        const body = await readJsonBody(request);
+        const diagnostic = captureDiagnosticSchema.parse(body);
+        const saved = await saveCaptureDiagnostic(diagnostic);
+        sendJson(response, 200, {
+          capturedAt: saved.capturedAt,
+          ok: true,
+          source: saved.source,
+          stage: saved.stage,
+          status: saved.status,
+        });
+        return;
+      }
+
+      if (request.method === 'POST' && normalizedPath === '/active-flow/from-tab') {
         sendJson(response, 200, {
           activeFlow: await selectTabFlow(),
           ok: true,
@@ -328,7 +408,7 @@ export const createBridgeServer = () =>
         return;
       }
 
-      if (request.method === 'POST' && requestUrl.pathname === '/select-flow') {
+      if (request.method === 'POST' && normalizedPath === '/select-flow') {
         const body = await readJsonBody(request);
         const flowId = flowIdSchema.parse((body as { flowId?: string }).flowId);
         sendJson(response, 200, {
@@ -338,7 +418,7 @@ export const createBridgeServer = () =>
         return;
       }
 
-      if (request.method === 'POST' && requestUrl.pathname === '/select-flow/from-tab') {
+      if (request.method === 'POST' && normalizedPath === '/select-flow/from-tab') {
         sendJson(response, 200, {
           activeFlow: await selectTabFlow(),
           ok: true,
@@ -346,7 +426,7 @@ export const createBridgeServer = () =>
         return;
       }
 
-      if (request.method === 'POST' && requestUrl.pathname === '/selected-work-tab') {
+      if (request.method === 'POST' && normalizedPath === '/selected-work-tab') {
         const body = await readJsonBody(request);
         const parsed = selectWorkTabInputSchema.parse(body);
         const selected = await selectWorkTab({ tabId: parsed.tabId });
@@ -357,7 +437,7 @@ export const createBridgeServer = () =>
         return;
       }
 
-      if (request.method === 'POST' && requestUrl.pathname === '/revert-last-update') {
+      if (request.method === 'POST' && normalizedPath === '/revert-last-update') {
         const reverted = await revertLastUpdate();
         sendJson(response, 200, {
           flowId: reverted.flow.flowId,
@@ -367,7 +447,7 @@ export const createBridgeServer = () =>
         return;
       }
 
-      if (request.method === 'POST' && requestUrl.pathname === '/refresh-last-run') {
+      if (request.method === 'POST' && normalizedPath === '/refresh-last-run') {
         const lastRun = await refreshLatestRun();
         sendJson(response, 200, {
           lastRun,
@@ -426,10 +506,66 @@ const probeExistingBridge = async () => {
   }
 };
 
+const loadLocalState = async () => {
+  await loadCapturedSessions();
+  await loadSelectedWorkTab();
+  await loadSession();
+  await loadActiveTarget();
+  await loadFlowCatalog();
+  await loadFlowSnapshot();
+  await loadLastRun();
+  await loadTokenAudit();
+  await loadCaptureDiagnostics();
+  await loadLastUpdate();
+};
+
+const handleCli = async () => {
+  const command = process.argv[2];
+
+  if (!command) return false;
+
+  if (command === 'version' || command === '--version' || command === '-v') {
+    console.log(packageVersion);
+    return true;
+  }
+
+  if (command === 'extension-path') {
+    console.log(path.join(getPackageRoot(), 'dist', 'extension'));
+    return true;
+  }
+
+  if (command === 'doctor') {
+    const bridgeHealth = await probeExistingBridge();
+    if (bridgeHealth) {
+      console.log(JSON.stringify({ bridge: bridgeHealth, ok: true }, null, 2));
+      return true;
+    }
+
+    await loadLocalState();
+    console.log(
+      JSON.stringify(
+        {
+          bridge: getBridgeRuntimeInfo(),
+          health: createHealthPayload(),
+          ok: true,
+        },
+        null,
+        2,
+      ),
+    );
+    return true;
+  }
+
+  console.error(`Unknown command "${command}". Use doctor, extension-path, or version.`);
+  process.exitCode = 1;
+  return true;
+};
+
 const ensureBridgeServer = async () => {
   try {
     await listen(bridgeServer, bridgeHost, bridgePort);
     ownsBridgeServer = true;
+    setBridgeMode('owned');
     return { mode: 'owned' as const };
   } catch (error) {
     if ((error as NodeJS.ErrnoException)?.code !== 'EADDRINUSE') {
@@ -440,6 +576,7 @@ const ensureBridgeServer = async () => {
 
     if (healthyBridge) {
       ownsBridgeServer = false;
+      setBridgeMode('reused');
       return { health: healthyBridge, mode: 'reused' as const };
     }
 
@@ -451,15 +588,9 @@ const ensureBridgeServer = async () => {
 };
 
 const main = async () => {
-  await loadCapturedSessions();
-  await loadSelectedWorkTab();
-  await loadSession();
-  await loadActiveTarget();
-  await loadFlowCatalog();
-  await loadFlowSnapshot();
-  await loadLastRun();
-  await loadTokenAudit();
-  await loadLastUpdate();
+  if (await handleCli()) return;
+
+  await loadLocalState();
   await ensureBridgeServer();
 
   const transport = new StdioServerTransport();

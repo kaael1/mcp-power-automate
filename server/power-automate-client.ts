@@ -18,6 +18,7 @@ import {
   TERMINAL_RUN_STATUSES,
   withFailedAction,
 } from './client-helpers.js';
+import { getLatestCaptureDiagnostic, getLatestCaptureDiagnosticForFlow } from './capture-diagnostics-store.js';
 import { getCapturedSession, listCapturedSessions } from './captured-sessions-store.js';
 import { getFlowCatalogForEnv, saveFlowCatalog } from './flow-catalog-store.js';
 import { getFlowSnapshot, getFlowSnapshotForFlow } from './flow-snapshot-store.js';
@@ -26,6 +27,7 @@ import type {
   ActiveTarget,
   CapturedSession,
   CloneFlowInput,
+  ConnectFlowInput,
   CreateFlowInput,
   FlowCatalog,
   FlowCatalogItem,
@@ -44,17 +46,34 @@ import type {
   WaitForRunInput,
 } from './schemas.js';
 import { editorSchema } from './schemas.js';
-import { PowerAutomateSessionError } from './errors.js';
+import { PowerAutomateError, PowerAutomateSessionError, toPowerAutomateApiError } from './errors.js';
 import { getSession } from './session-store.js';
 import { getSelectedWorkTab, saveSelectedWorkTab } from './selected-work-tab-store.js';
 import { getStoreDiagnostics } from './store-utils.js';
 import { getTokenAudit } from './token-audit-store.js';
-import { hasLegacyCompatibleToken } from './token-compat.js';
+import { decodeJwtPayload, hasLegacyCompatibleToken } from './token-compat.js';
 import { getLastUpdate, getLastUpdateForFlow, saveLastUpdate } from './update-history-store.js';
 
 const MODERN_API_VERSION = '1';
 const LEGACY_API_VERSION = '2016-11-01';
 const LEGACY_FLOW_BASE_URL = 'https://api.flow.microsoft.com/';
+const FLOW_SERVICE_TOKEN_MISSING_MESSAGE =
+  'No flow-compatible token is available yet. Focus or reopen the flow page so the extension can capture a flow-service token.';
+
+const normalizeAudience = (audience: unknown) =>
+  typeof audience === 'string' ? audience.replace(/\/+$/, '').toLowerCase() : '';
+
+const getLatestCaptureDiagnosticForTarget = (target?: { envId: string; flowId: string }) =>
+  target ? getLatestCaptureDiagnosticForFlow(target) || getLatestCaptureDiagnostic() : getLatestCaptureDiagnostic();
+
+const createFlowServiceTokenMissingError = (target?: { envId: string; flowId: string }) =>
+  new PowerAutomateSessionError({
+    code: 'LEGACY_TOKEN_MISSING',
+    details: {
+      latestCaptureDiagnostic: getLatestCaptureDiagnosticForTarget(target),
+    },
+    message: FLOW_SERVICE_TOKEN_MISSING_MESSAGE,
+  });
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type AnyRecord = Record<string, any>;
@@ -80,6 +99,11 @@ type ResolvedTarget = {
   selectionSource: string | null;
 };
 
+const isTokenExpired = (authorization: string | null | undefined) => {
+  const tokenPayload = decodeJwtPayload(authorization) as { exp?: unknown } | null;
+  return typeof tokenPayload?.exp === 'number' ? tokenPayload.exp * 1000 <= Date.now() : false;
+};
+
 type RunActionSummary = {
   code: string | null;
   endTime: string | null;
@@ -96,7 +120,7 @@ const ensureSession = (): Session => {
   if (!session) {
     throw new PowerAutomateSessionError({
       code: 'NO_SESSION',
-      message: 'No active browser session found. Open or refresh the target flow in Power Automate with the extension enabled.',
+      message: 'No active browser session found. Open or focus the target flow in Power Automate with the extension enabled.',
     });
   }
 
@@ -223,7 +247,7 @@ const ensureTargetSession = (target?: TargetRef): TargetSession => {
     throw new PowerAutomateSessionError({
       code: 'NO_TARGET',
       message:
-        'No active flow target is selected. Use list_flows and select_flow, or capture the current tab as the active target first.',
+        'No active flow target is selected. Use connect_flow, or focus a captured Power Automate flow tab first.',
     });
   }
 
@@ -250,15 +274,6 @@ const readResponseBody = async (response: Response): Promise<unknown> => {
 };
 
 const toApiError = (response: Response, body: unknown) => {
-  if (response.status === 401 || response.status === 403) {
-    return new PowerAutomateSessionError({
-      code: 'SESSION_EXPIRED',
-      message:
-        'The captured Power Automate session is expired or invalid. Reopen or refresh the flow in the browser to capture a fresh token.',
-      retryable: true,
-    });
-  }
-
   const parsedBody = body as AnyRecord | string | null;
   const message =
     (parsedBody as AnyRecord | null)?.error?.message ||
@@ -266,7 +281,12 @@ const toApiError = (response: Response, body: unknown) => {
     (typeof parsedBody === 'string' && parsedBody) ||
     `Power Automate API request failed with ${response.status} ${response.statusText}.`;
 
-  return new Error(message);
+  return toPowerAutomateApiError({
+    body,
+    fallbackMessage: message,
+    status: response.status,
+    statusText: response.statusText,
+  });
 };
 
 const requestJson = async <T = AnyRecord>({
@@ -311,28 +331,39 @@ const getLegacyFlowsCollectionPath = (envId: string) =>
   `providers/Microsoft.ProcessSimple/environments/${envId}/flows`;
 
 const getPreferredLegacySession = (session: Session): PreferredLegacySession | null => {
-  if (session.legacyApiUrl && session.legacyToken) {
+  if (session.legacyApiUrl && session.legacyToken && !isTokenExpired(session.legacyToken)) {
     return {
       baseUrl: session.legacyApiUrl,
-      source: 'captured-legacy-session',
+      source: 'captured-flow-service-session',
       token: session.legacyToken,
     };
   }
 
-  if (hasLegacyCompatibleToken(session.apiToken)) {
+  if (hasLegacyCompatibleToken(session.apiToken) && !isTokenExpired(session.apiToken)) {
     return {
       baseUrl: LEGACY_FLOW_BASE_URL,
-      source: 'captured-modern-session',
+      source: 'captured-flow-service-compatible-session',
       token: session.apiToken,
     };
   }
 
   const tokenAudit = getTokenAudit();
   const preferredToken =
-    tokenAudit?.candidates?.find((candidate) => candidate.aud === 'https://service.flow.microsoft.com/') ||
-    tokenAudit?.candidates?.find((candidate) => candidate.aud === 'https://service.powerapps.com/');
+    tokenAudit?.candidates?.find((candidate) => normalizeAudience(candidate.aud) === 'https://service.flow.microsoft.com') ||
+    tokenAudit?.candidates?.find((candidate) => normalizeAudience(candidate.aud) === 'https://service.powerapps.com');
 
   if (!preferredToken) return null;
+
+  if (isTokenExpired(preferredToken.token)) {
+    throw new PowerAutomateSessionError({
+      code: 'TOKEN_EXPIRED',
+      details: {
+        source: preferredToken.source,
+      },
+      message: 'The captured flow-service token is expired. Reopen or focus the flow page so the extension can capture a fresh token.',
+      retryable: true,
+    });
+  }
 
   return {
     baseUrl: LEGACY_FLOW_BASE_URL,
@@ -388,6 +419,88 @@ const normalizeFlowCatalogItem = (
   };
 };
 
+const catalogItemFromKnownFlow = ({
+  accessScope = 'owned',
+  displayName,
+  envId,
+  flowId,
+  source,
+}: {
+  accessScope?: FlowCatalogItem['accessScope'];
+  displayName?: string | null;
+  envId: string;
+  flowId: string;
+  source: 'active-target' | 'captured-tab' | 'snapshot';
+}): FlowCatalogItem => ({
+  accessScope,
+  actionTypes: [],
+  createdTime: null,
+  creatorObjectId: null,
+  displayName: displayName || resolveFlowDisplayName({ envId, flowId }) || `Flow ${flowId.slice(0, 8)}`,
+  envId,
+  flowId,
+  lastModifiedTime: null,
+  sharingType: source,
+  state: null,
+  triggerTypes: [],
+  userType: null,
+});
+
+const getKnownFlowCatalogItems = (envId: string): FlowCatalogItem[] => {
+  const items: FlowCatalogItem[] = [];
+  const seen = new Set<string>();
+  const add = (item: FlowCatalogItem | null) => {
+    if (!item || item.envId !== envId || seen.has(item.flowId)) return;
+    seen.add(item.flowId);
+    items.push(item);
+  };
+
+  for (const capturedSession of listCapturedSessions()) {
+    add(
+      catalogItemFromKnownFlow({
+        accessScope: 'owned',
+        displayName: resolveFlowDisplayName(capturedSession),
+        envId: capturedSession.envId,
+        flowId: capturedSession.flowId,
+        source: 'captured-tab',
+      }),
+    );
+  }
+
+  const snapshot = getFlowSnapshot();
+  if (snapshot) {
+    add(
+      catalogItemFromKnownFlow({
+        accessScope: 'owned',
+        displayName: snapshot.displayName,
+        envId: snapshot.envId,
+        flowId: snapshot.flowId,
+        source: 'snapshot',
+      }),
+    );
+  }
+
+  const activeTarget = getActiveTarget(envId);
+  if (activeTarget) {
+    add(
+      catalogItemFromKnownFlow({
+        accessScope: 'owned',
+        displayName: activeTarget.displayName,
+        envId: activeTarget.envId,
+        flowId: activeTarget.flowId,
+        source: 'active-target',
+      }),
+    );
+  }
+
+  return items;
+};
+
+const mergeCatalogWithKnownFlows = (catalog: FlowCatalog, envId = catalog.envId): FlowCatalog => ({
+  ...catalog,
+  flows: mergeCatalogItems(catalog.flows, getKnownFlowCatalogItems(envId)),
+});
+
 const normalizeLegacyFlow = (session: Pick<Session, 'envId' | 'flowId'>, flowResponse: AnyRecord): NormalizedFlow => {
   const properties = flowResponse?.properties || {};
 
@@ -439,10 +552,7 @@ const fetchRawFlowLegacy = async (session: Session & { envId: string; flowId: st
   const legacySession = getPreferredLegacySession(session);
 
   if (!legacySession) {
-    throw new PowerAutomateSessionError({
-      code: 'LEGACY_TOKEN_MISSING',
-      message: 'No flow-compatible legacy token is available yet. Refresh the flow page again to capture a better token.',
-    });
+    throw createFlowServiceTokenMissingError(session);
   }
 
   return requestJson<AnyRecord>({
@@ -458,10 +568,7 @@ const queryLegacyFlows = async (session: Session, options: { filter?: string } =
   const legacySession = getPreferredLegacySession(session);
 
   if (!legacySession) {
-    throw new PowerAutomateSessionError({
-      code: 'LEGACY_TOKEN_MISSING',
-      message: 'No flow-compatible legacy token is available yet. Refresh the flow page again to capture a better token.',
-    });
+    throw createFlowServiceTokenMissingError(session);
   }
 
   const resourcePath = getLegacyFlowsCollectionPath(session.envId);
@@ -531,7 +638,7 @@ const listFlowsLegacy = async (session: Session): Promise<FlowCatalog> => {
         })
     : [];
 
-  const flows = mergeCatalogItems(baseFlows, sharedUserFlows, portalSharedExtras);
+  const flows = mergeCatalogItems(baseFlows, sharedUserFlows, portalSharedExtras, getKnownFlowCatalogItems(session.envId));
 
   const catalog: FlowCatalog = {
     capturedAt: new Date().toISOString(),
@@ -640,10 +747,23 @@ export const listFlows = async ({ limit = 100, query }: ListFlowsInput = {}) => 
 
     if (cachedCatalog) {
       return {
-        ...filterCatalogFlows(cachedCatalog, { limit, query }),
+        ...filterCatalogFlows(mergeCatalogWithKnownFlows(cachedCatalog, session.envId), { limit, query }),
         message:
-          'Returned cached flow catalog because the live refresh failed. Refresh the Power Automate session if the list looks stale.',
+          'Returned cached and browser-captured flows because the live refresh failed. Focus the target flow page if the list looks stale.',
       };
+    }
+
+    const knownFlows = getKnownFlowCatalogItems(session.envId);
+    if (knownFlows.length > 0) {
+      return filterCatalogFlows(
+        {
+          capturedAt: new Date().toISOString(),
+          envId: session.envId,
+          flows: knownFlows,
+          source: 'browser-capture',
+        },
+        { limit, query },
+      );
     }
 
     throw error;
@@ -658,14 +778,28 @@ export const setActiveFlow = async ({
   selectionSource?: 'clone-result' | 'create-result' | 'manual' | 'tab-capture';
 }) => {
   const session = ensureSession();
-  const catalog = getFlowCatalogForEnv(session.envId) || (await listFlowsLegacy(session));
+  const catalog = mergeCatalogWithKnownFlows(getFlowCatalogForEnv(session.envId) || (await listFlowsLegacy(session)), session.envId);
   const matchingFlow = catalog.flows.find((flow) => flow.flowId === flowId);
 
   if (!matchingFlow) {
-    throw new PowerAutomateSessionError({
-      code: 'FLOW_NOT_FOUND',
-      message: `The flow ${flowId} was not found in the current environment catalog. Refresh flows and try again.`,
+    const target = await saveActiveTarget({
+      displayName: resolveFlowDisplayName({ envId: session.envId, flowId }),
+      envId: session.envId,
+      flowId,
+      selectedAt: new Date().toISOString(),
+      selectionSource,
     });
+
+    return {
+      activeTarget: target,
+      flow: catalogItemFromKnownFlow({
+        displayName: target.displayName,
+        envId: session.envId,
+        flowId,
+        source: 'active-target',
+      }),
+      message: 'Selected a browser-known flow that is not present in the refreshed catalog yet.',
+    };
   }
 
   const target = await saveActiveTarget({
@@ -705,6 +839,160 @@ export const setActiveFlowFromTab = async () => {
 };
 
 export const selectTabFlow = () => setActiveFlowFromTab();
+
+const connectCapturedSession = async (capturedSession: CapturedSession, selectionSource: ActiveTarget['selectionSource'] = 'tab-capture') => {
+  await saveSelectedWorkTab({
+    selectedAt: new Date().toISOString(),
+    tabId: capturedSession.tabId,
+  });
+
+  const activeTarget = await saveActiveTarget({
+    displayName: resolveFlowDisplayName(capturedSession),
+    envId: capturedSession.envId,
+    flowId: capturedSession.flowId,
+    selectedAt: new Date().toISOString(),
+    selectionSource,
+  });
+
+  return {
+    activeTarget,
+    connected: true,
+    selectedWorkSession: summarizeCapturedSession(capturedSession),
+  };
+};
+
+const getConnectCandidates = ({ envId, nameQuery }: { envId?: string; nameQuery?: string } = {}) => {
+  const normalizedQuery = nameQuery?.trim().toLowerCase() || null;
+  const byKey = new Map<string, FlowCatalogItem & { tabId?: number | null }>();
+
+  const add = (flow: FlowCatalogItem & { tabId?: number | null }) => {
+    if (envId && flow.envId !== envId) return;
+    if (normalizedQuery && !flow.displayName.toLowerCase().includes(normalizedQuery) && !flow.flowId.includes(normalizedQuery)) return;
+    byKey.set(`${flow.envId}:${flow.flowId}`, flow);
+  };
+
+  for (const capturedSession of listCapturedSessions()) {
+    add({
+      ...catalogItemFromKnownFlow({
+        displayName: resolveFlowDisplayName(capturedSession),
+        envId: capturedSession.envId,
+        flowId: capturedSession.flowId,
+        source: 'captured-tab',
+      }),
+      tabId: capturedSession.tabId,
+    });
+  }
+
+  const session = getSession();
+  const catalog = session ? getFlowCatalogForEnv(session.envId) : null;
+  for (const flow of catalog?.flows || []) {
+    add(flow);
+  }
+
+  const snapshot = getFlowSnapshot();
+  if (snapshot) {
+    add(
+      catalogItemFromKnownFlow({
+        displayName: snapshot.displayName,
+        envId: snapshot.envId,
+        flowId: snapshot.flowId,
+        source: 'snapshot',
+      }),
+    );
+  }
+
+  return [...byKey.values()].sort((left, right) => left.displayName.localeCompare(right.displayName));
+};
+
+export const connectFlow = async ({ envId, flowId, nameQuery, tabId }: ConnectFlowInput) => {
+  if (typeof tabId === 'number') {
+    const capturedSession = getCapturedSession(tabId);
+
+    if (!capturedSession) {
+      throw new PowerAutomateSessionError({
+        code: 'NO_SESSION',
+        message: `No captured browser session is stored for tab ${tabId}.`,
+      });
+    }
+
+    return connectCapturedSession(capturedSession);
+  }
+
+  const session = getSession();
+
+  if (flowId) {
+    const capturedSession = listCapturedSessions().find(
+      (candidate) => candidate.flowId === flowId && (!envId || candidate.envId === envId),
+    );
+
+    if (capturedSession) {
+      return connectCapturedSession(capturedSession);
+    }
+
+    const resolvedEnvId = envId || session?.envId;
+
+    if (!resolvedEnvId) {
+      throw new PowerAutomateSessionError({
+        code: 'NO_SESSION',
+        message: 'No browser session is available yet. Open a Power Automate flow once so the extension can capture the environment.',
+      });
+    }
+
+    const activeTarget = await saveActiveTarget({
+      displayName: resolveFlowDisplayName({ envId: resolvedEnvId, flowId }),
+      envId: resolvedEnvId,
+      flowId,
+      selectedAt: new Date().toISOString(),
+      selectionSource: 'manual',
+    });
+
+    return {
+      activeTarget,
+      connected: Boolean(session),
+      message: session ? null : 'Saved the target, but browser-backed operations still need a captured session.',
+    };
+  }
+
+  const candidates = getConnectCandidates({ envId, nameQuery });
+
+  if (candidates.length === 1) {
+    const [candidate] = candidates;
+    const capturedSession = typeof candidate.tabId === 'number' ? getCapturedSession(candidate.tabId) : null;
+    if (capturedSession) return connectCapturedSession(capturedSession);
+
+    const activeTarget = await saveActiveTarget({
+      displayName: candidate.displayName,
+      envId: candidate.envId,
+      flowId: candidate.flowId,
+      selectedAt: new Date().toISOString(),
+      selectionSource: 'manual',
+    });
+
+    return {
+      activeTarget,
+      connected: Boolean(session),
+    };
+  }
+
+  if (candidates.length > 1) {
+    return {
+      candidates,
+      connected: false,
+      message: 'More than one flow matched. Call connect_flow again with flowId or tabId.',
+      needsSelection: true,
+    };
+  }
+
+  throw new PowerAutomateError({
+    code: 'FLOW_NOT_FOUND',
+    details: {
+      envId: envId || null,
+      nameQuery: nameQuery || null,
+    },
+    message: 'No captured or cataloged flow matched the requested target.',
+    retryable: true,
+  });
+};
 
 export const getActiveFlow = async () => {
   const session = ensureSession();
@@ -790,10 +1078,7 @@ const updateCurrentFlowLegacy = async (session: TargetSession, { displayName, fl
   const legacySession = getPreferredLegacySession(session);
 
   if (!legacySession) {
-    throw new PowerAutomateSessionError({
-      code: 'LEGACY_TOKEN_MISSING',
-      message: 'No flow-compatible legacy token is available yet. Refresh the flow page again to capture a better token.',
-    });
+    throw createFlowServiceTokenMissingError(session);
   }
 
   const before = normalizeLegacyFlow(session, await fetchRawFlowLegacy(session));
@@ -914,10 +1199,7 @@ const createFlowLegacy = async (session: Session, { displayName, flow }: { displ
   const legacySession = getPreferredLegacySession(session);
 
   if (!legacySession) {
-    throw new PowerAutomateSessionError({
-      code: 'LEGACY_TOKEN_MISSING',
-      message: 'No flow-compatible legacy token is available yet. Refresh the flow page again to capture a better token.',
-    });
+    throw createFlowServiceTokenMissingError(session);
   }
 
   const createdFlow = await requestJson<AnyRecord>({
@@ -1075,7 +1357,7 @@ export const getContext = ({ bridgeMode = 'owned' }: { bridgeMode?: BridgeMode }
       'One or more local state files are corrupted. Reopen the flow or clear local state.'
     : capturedSessions.length > 0 ?
       'Select a work tab before running session-dependent actions.'
-    : 'Open or refresh a Power Automate flow so the extension can capture a session.';
+    : 'Open or focus a Power Automate flow so the extension can capture a session.';
   const noSessionCode: CapabilityReasonCode = hasStoreCorruption ? 'STORE_CORRUPTED' : 'NO_SESSION';
   const noTargetReason = 'Select a flow or sync the current browser tab before running target-specific actions.';
 
@@ -1099,7 +1381,7 @@ export const getContext = ({ bridgeMode = 'owned' }: { bridgeMode?: BridgeMode }
             reason:
               !session ? noSessionReason
               : !resolvedTarget ? noTargetReason
-              : 'Refresh the flow page again to capture a legacy-compatible token before inspecting runs.',
+              : 'Focus or reopen the flow page so the extension can capture a flow-service token before inspecting runs.',
             reasonCode:
               !session ? noSessionCode
               : !resolvedTarget ? 'NO_TARGET'
@@ -1116,7 +1398,7 @@ export const getContext = ({ bridgeMode = 'owned' }: { bridgeMode?: BridgeMode }
           { available: true }
         : {
             available: false,
-            reason: !session ? noSessionReason : 'Refresh the flow page again to capture a legacy-compatible token.',
+            reason: !session ? noSessionReason : 'Focus or reopen the flow page so the extension can capture a flow-service token.',
             reasonCode: !session ? noSessionCode : 'LEGACY_TOKEN_MISSING',
           },
       ),
@@ -1128,7 +1410,7 @@ export const getContext = ({ bridgeMode = 'owned' }: { bridgeMode?: BridgeMode }
             reason:
               !session ? noSessionReason
               : !resolvedTarget ? noTargetReason
-              : 'Refresh the flow page again to capture a legacy-compatible token before validating.',
+              : 'Focus or reopen the flow page so the extension can capture a flow-service token before validating.',
             reasonCode:
               !session ? noSessionCode
               : !resolvedTarget ? 'NO_TARGET'
@@ -1142,7 +1424,16 @@ export const getContext = ({ bridgeMode = 'owned' }: { bridgeMode?: BridgeMode }
       lastRunCapturedAt: getLastRunSummary()?.capturedAt || null,
       lastUpdateCapturedAt: getLastUpdateSummary()?.capturedAt || null,
       legacySource: legacySession?.source || null,
-      snapshotCapturedAt: getFlowSnapshot()?.capturedAt || null,
+      latestCaptureDiagnostic: getLatestCaptureDiagnosticForTarget(
+        resolvedTarget?.envId && resolvedTarget.flowId ?
+          {
+            envId: resolvedTarget.envId,
+            flowId: resolvedTarget.flowId,
+          }
+        : undefined,
+      ),
+      snapshotCapturedAt:
+        resolvedTarget ? getFlowSnapshotForFlow(resolvedTarget)?.capturedAt || null : getFlowSnapshot()?.capturedAt || null,
       storeHealth: {
         items: storeHealthItems,
         ok: !hasStoreCorruption,
@@ -1254,10 +1545,7 @@ const listRunsLegacy = async (session: TargetSession, { limit = 10 }: ListRunsIn
   const legacySession = getPreferredLegacySession(session);
 
   if (!legacySession) {
-    throw new PowerAutomateSessionError({
-      code: 'LEGACY_TOKEN_MISSING',
-      message: 'No flow-compatible legacy token is available yet. Refresh the flow page again to capture a better token.',
-    });
+    throw createFlowServiceTokenMissingError(session);
   }
 
   const response = await requestJson<AnyRecord>({
@@ -1280,10 +1568,7 @@ const getRunLegacy = async (session: TargetSession, runId: string) => {
   const legacySession = getPreferredLegacySession(session);
 
   if (!legacySession) {
-    throw new PowerAutomateSessionError({
-      code: 'LEGACY_TOKEN_MISSING',
-      message: 'No flow-compatible legacy token is available yet. Refresh the flow page again to capture a better token.',
-    });
+    throw createFlowServiceTokenMissingError(session);
   }
 
   const run = await requestJson<AnyRecord>({
@@ -1304,10 +1589,7 @@ const getRunActionsLegacy = async (session: TargetSession, runId: string) => {
   const legacySession = getPreferredLegacySession(session);
 
   if (!legacySession) {
-    throw new PowerAutomateSessionError({
-      code: 'LEGACY_TOKEN_MISSING',
-      message: 'No flow-compatible legacy token is available yet. Refresh the flow page again to capture a better token.',
-    });
+    throw createFlowServiceTokenMissingError(session);
   }
 
   const response = await requestJson<AnyRecord>({
@@ -1349,7 +1631,7 @@ export const validateCurrentFlow = async ({ flow, target }: ValidateFlowInput) =
     return {
       available: false,
       message:
-        'Legacy validation is not available yet. Refresh the flow page again to capture a flow-compatible token.',
+        'Flow-service validation is not available yet. Focus or reopen the flow page so the extension can capture a flow-compatible token.',
     };
   }
 
@@ -1516,10 +1798,7 @@ export const getTriggerCallbackUrl = async ({ triggerName, target }: TriggerCall
   const legacySession = getPreferredLegacySession(session);
 
   if (!legacySession) {
-    throw new PowerAutomateSessionError({
-      code: 'LEGACY_TOKEN_MISSING',
-      message: 'No flow-compatible legacy token is available yet. Refresh the flow page again to capture a better token.',
-    });
+    throw createFlowServiceTokenMissingError(session);
   }
 
   const effectiveTriggerName = triggerName || (await getCurrentTriggerName(target));
@@ -1594,3 +1873,4 @@ export const invokeTrigger = async ({
     triggerName: callback.triggerName,
   };
 };
+

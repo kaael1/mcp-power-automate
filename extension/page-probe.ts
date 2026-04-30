@@ -1,4 +1,5 @@
 import { BRIDGE_SIGNAL, type RuntimeMessage } from './types.js';
+import { extractBestFlowLocation } from './url-utils.js';
 
 type ProbeState = {
   fetchPatched: boolean;
@@ -13,6 +14,10 @@ type ProbeState = {
     __paMcpPageProbeState?: ProbeState;
   };
   const TARGET_SCOPES = [
+    ['https://service.flow.microsoft.com/user_impersonation'],
+    ['https://service.flow.microsoft.com/.default'],
+    ['https://service.powerapps.com/user_impersonation'],
+    ['https://service.powerapps.com/.default'],
     ['https://api.powerplatform.com/PowerAutomate.Flow.Read', 'https://api.powerplatform.com/PowerAutomate.Flow.Write'],
     ['https://api.powerplatform.com/PowerAutomate.Flow.Write'],
     ['https://api.powerplatform.com/PowerAutomate.Flow.Read'],
@@ -29,14 +34,65 @@ type ProbeState = {
   const seenPayloads = probeState.seenPayloads;
   const seenMsalTokens = probeState.seenMsalTokens;
 
+  const getFrameUrlCandidates = () => {
+    const candidates = [window.location.href, document.referrer];
+
+    try {
+      if (window.parent && window.parent !== window) {
+        candidates.push(window.parent.location.href);
+      }
+    } catch {
+      // Cross-origin frames can still expose the parent URL through document.referrer.
+    }
+
+    try {
+      if (window.top && window.top !== window) {
+        candidates.push(window.top.location.href);
+      }
+    } catch {
+      // Cross-origin top frames can still expose the parent URL through document.referrer.
+    }
+
+    return candidates;
+  };
+
   const getCurrentContext = () => {
-    const flowIdMatch = window.location.href.match(/flows\/(?:shared\/)?([0-9a-f-]{36})/i);
-    const envIdMatch = window.location.href.match(/environments\/([a-zA-Z0-9-]+)/i);
+    const context = extractBestFlowLocation(getFrameUrlCandidates());
 
     return {
-      envId: envIdMatch?.[1] || null,
-      flowId: flowIdMatch?.[1] || null,
+      ...context,
+      currentUrl: window.location.href,
+      isTopFrame: window.top === window,
+      referrer: document.referrer || null,
     };
+  };
+
+  const postDiagnostic = (
+    stage: string,
+    status: 'error' | 'ok' | 'warning',
+    message?: string,
+    details?: Record<string, unknown>,
+  ) => {
+    const context = getCurrentContext();
+
+    window.postMessage(
+      {
+        payload: {
+          capturedAt: new Date().toISOString(),
+          details,
+          envId: context.envId || undefined,
+          flowId: context.flowId || undefined,
+          message,
+          portalUrl: context.portalUrl || window.location.href,
+          source: 'page-probe',
+          stage,
+          status,
+        },
+        source: BRIDGE_SIGNAL,
+        type: 'capture-diagnostics',
+      } satisfies RuntimeMessage,
+      '*',
+    );
   };
 
   interface MsalResult {
@@ -68,6 +124,11 @@ type ProbeState = {
 
     if (seenPayloads.has(signature)) return;
     seenPayloads.add(signature);
+    postDiagnostic('snapshot-capture', 'ok', 'Flow snapshot candidate found in page data.', {
+      actionCount: Object.keys(payload.flow.definition.actions || {}).length,
+      source: payload.source,
+      triggerCount: Object.keys(payload.flow.definition.triggers || {}).length,
+    });
 
     window.postMessage(
       {
@@ -186,31 +247,64 @@ type ProbeState = {
   const findMsalCandidates = () => {
     const candidates: MsalClient[] = [];
     const seen = new WeakSet<object>();
+    const queue: Array<{ depth: number; value: unknown }> = [];
+    const maxDepth = 5;
+    const maxNodes = 3000;
+    let visited = 0;
 
     const maybeAdd = (value: unknown) => {
       if (!value || typeof value !== 'object') return;
       if (seen.has(value)) return;
       seen.add(value);
+      visited += 1;
 
       const candidate = value as Partial<MsalClient>;
 
       if (typeof candidate.acquireTokenSilent === 'function' && typeof candidate.getAllAccounts === 'function') {
         candidates.push(candidate as MsalClient);
       }
+
+      queue.push({ depth: 0, value });
     };
 
     for (const key of Object.getOwnPropertyNames(window)) {
       try {
-        const value = (window as unknown as Record<string, unknown>)[key];
-        maybeAdd(value);
-
-        if (value && typeof value === 'object') {
-          for (const nested of Object.values(value)) {
-            maybeAdd(nested);
-          }
-        }
+        maybeAdd((window as unknown as Record<string, unknown>)[key]);
       } catch {
         // Ignore inaccessible globals.
+      }
+    }
+
+    while (queue.length > 0 && visited < maxNodes) {
+      const current = queue.shift();
+      if (!current || current.depth >= maxDepth) continue;
+      if (!current.value || typeof current.value !== 'object') continue;
+
+      let keys: string[];
+      try {
+        keys = Object.getOwnPropertyNames(current.value);
+      } catch {
+        continue;
+      }
+
+      for (const key of keys) {
+        if (visited >= maxNodes) break;
+
+        try {
+          const nested = (current.value as Record<string, unknown>)[key];
+          if (!nested || typeof nested !== 'object' || seen.has(nested)) continue;
+
+          const candidate = nested as Partial<MsalClient>;
+          if (typeof candidate.acquireTokenSilent === 'function' && typeof candidate.getAllAccounts === 'function') {
+            candidates.push(candidate as MsalClient);
+          }
+
+          seen.add(nested);
+          visited += 1;
+          queue.push({ depth: current.depth + 1, value: nested });
+        } catch {
+          // Ignore throwing getters.
+        }
       }
     }
 
@@ -219,10 +313,14 @@ type ProbeState = {
 
   const tryAcquireMsalToken = async () => {
     const candidates = findMsalCandidates();
+    let accountCount = 0;
+    const failures: Array<{ error: string; scope: string }> = [];
+    const successes: Array<{ scope: string }> = [];
 
     for (const client of candidates) {
       try {
         const accounts = client.getAllAccounts() || [];
+        accountCount += accounts.length;
 
         for (const account of accounts) {
           for (const scopes of TARGET_SCOPES) {
@@ -236,19 +334,24 @@ type ProbeState = {
               if (!result?.accessToken || seenMsalTokens.has(result.accessToken)) continue;
 
               seenMsalTokens.add(result.accessToken);
+              successes.push({ scope: scopes.join(' ') });
 
               window.postMessage(
                 {
                   score: scopes.some((scope) => scope.endsWith('Flow.Write')) ? 500 : 450,
                   scope: Array.isArray(result.scopes) ? result.scopes.join(' ') : scopes.join(' '),
-                  source: BRIDGE_SIGNAL,
-                  token: `Bearer ${result.accessToken}`,
-                  type: 'token-from-msal',
-                } satisfies RuntimeMessage,
+              source: BRIDGE_SIGNAL,
+              token: `Bearer ${result.accessToken}`,
+              tokenSource: 'msal-silent',
+              type: 'token-from-msal',
+            } satisfies RuntimeMessage,
                 '*',
               );
-            } catch {
-              // Ignore silent auth failures and keep trying other clients/scopes.
+            } catch (error) {
+              failures.push({
+                error: error instanceof Error ? error.message : String(error),
+                scope: scopes.join(' '),
+              });
             }
           }
         }
@@ -256,6 +359,23 @@ type ProbeState = {
         continue;
       }
     }
+
+    postDiagnostic(
+      'msal-scan',
+      successes.length > 0 ? 'ok' : candidates.length > 0 ? 'warning' : 'warning',
+      successes.length > 0
+        ? 'MSAL silent token acquisition returned token candidates.'
+        : candidates.length > 0
+          ? 'MSAL clients were found, but silent token acquisition did not return usable tokens.'
+          : 'No MSAL client was found in page globals.',
+      {
+        accountCount,
+        clientCount: candidates.length,
+        failedScopes: failures.slice(0, 12),
+        successCount: successes.length,
+        successfulScopes: successes.slice(0, 12),
+      },
+    );
   };
 
   const patchFetch = () => {
@@ -329,6 +449,13 @@ type ProbeState = {
 
   const { envId, flowId } = getCurrentContext();
   if (!envId || !flowId) return;
+
+  postDiagnostic('page-probe-start', 'ok', 'Page probe started.', {
+    href: window.location.href,
+    isTopFrame: window.top === window,
+    matchedPortalUrl: getCurrentContext().portalUrl,
+    referrer: document.referrer || null,
+  });
 
   if (!probeState.initialized) {
     probeState.initialized = true;

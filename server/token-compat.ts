@@ -22,9 +22,12 @@ export const decodeJwtPayload = (authorization: string | null | undefined): Reco
   }
 };
 
+const normalizeAudience = (audience: unknown) =>
+  typeof audience === 'string' ? audience.replace(/\/+$/, '').toLowerCase() : '';
+
 export const isLegacyCompatibleAudience = (audience: unknown) =>
-  audience === 'https://service.flow.microsoft.com/' ||
-  audience === 'https://service.powerapps.com/';
+  normalizeAudience(audience) === 'https://service.flow.microsoft.com' ||
+  normalizeAudience(audience) === 'https://service.powerapps.com';
 
 export const hasLegacyCompatibleToken = (authorization: string | null | undefined) => {
   const payload = decodeJwtPayload(authorization);

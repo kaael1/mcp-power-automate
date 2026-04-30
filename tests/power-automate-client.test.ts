@@ -183,4 +183,79 @@ describe('power automate client', () => {
     expect(contextPayload.context.session.envId).toBe('Default-999');
     expect(contextPayload.context.session.flowId).toBe('flow-b');
   });
+
+  it('uses the most recent captured tab as session context when no work tab is selected', async () => {
+    const capturedSessionsStore = await import('../server/captured-sessions-store.js');
+    const client = await import('../server/power-automate-client.js');
+
+    await capturedSessionsStore.upsertCapturedSession({
+      ...validSession,
+      capturedAt: '2026-04-01T00:05:00.000Z',
+      flowId: 'flow-b',
+      lastSeenAt: '2026-04-01T00:05:00.000Z',
+      tabId: 222,
+    });
+
+    const contextPayload = client.getContextPayload();
+    expect(contextPayload.context.session.connected).toBe(true);
+    expect(contextPayload.context.session.flowId).toBe('flow-b');
+  });
+
+  it('connects a browser-captured flow even when the local catalog is stale', async () => {
+    const capturedSessionsStore = await import('../server/captured-sessions-store.js');
+    const client = await import('../server/power-automate-client.js');
+
+    await capturedSessionsStore.upsertCapturedSession({
+      ...validSession,
+      capturedAt: '2026-04-01T00:05:00.000Z',
+      flowId: 'flow-c',
+      lastSeenAt: '2026-04-01T00:05:00.000Z',
+      tabId: 333,
+    });
+
+    const connected = await client.connectFlow({ flowId: 'flow-c' });
+    expect('activeTarget' in connected).toBe(true);
+    if (!('activeTarget' in connected)) throw new Error('Expected connect_flow to select a target.');
+    expect(connected.activeTarget?.flowId).toBe('flow-c');
+
+    const flows = await client.listFlows();
+    expect(flows.flows.map((flow) => flow.flowId)).toContain('flow-c');
+  });
+
+  it('only reports a snapshot as ready when it matches the resolved target flow', async () => {
+    const sessionStore = await import('../server/session-store.js');
+    const targetStore = await import('../server/active-target-store.js');
+    const snapshotStore = await import('../server/flow-snapshot-store.js');
+    const client = await import('../server/power-automate-client.js');
+
+    await sessionStore.saveSession(validSession);
+    await targetStore.saveActiveTarget(activeTarget);
+    await snapshotStore.saveFlowSnapshot({
+      capturedAt: '2026-04-01T00:10:00.000Z',
+      displayName: 'Other Flow',
+      envId: 'Default-123',
+      flow: {
+        connectionReferences: {},
+        definition: { actions: {}, triggers: {} },
+      },
+      flowId: 'flow-b',
+      source: 'page-state',
+    });
+
+    expect(client.getContextPayload().context.diagnostics.snapshotCapturedAt).toBeNull();
+
+    await snapshotStore.saveFlowSnapshot({
+      capturedAt: '2026-04-01T00:11:00.000Z',
+      displayName: 'Flow A',
+      envId: 'Default-123',
+      flow: {
+        connectionReferences: {},
+        definition: { actions: {}, triggers: {} },
+      },
+      flowId: 'flow-a',
+      source: 'page-state',
+    });
+
+    expect(client.getContextPayload().context.diagnostics.snapshotCapturedAt).toBe('2026-04-01T00:11:00.000Z');
+  });
 });

@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { AlertCircle, ChevronDown, ChevronRight, Database, Key, Send, Settings2 } from 'lucide-react';
+import { Activity, AlertCircle, ChevronDown, ChevronRight, Database, Key, Send, Settings2 } from 'lucide-react';
 
 import { formatRelativeTime, t, type Locale } from '../../i18n.js';
 import type { DashboardModel } from '../../dashboard-model.js';
@@ -84,6 +84,26 @@ export function DiagnosticsBlock({
                 </span>
               }
             />
+          ) : null}
+
+          {diagnostics.latestCaptureDiagnostic ? (
+            <>
+              <InlineKv
+                label={t(locale, 'Capture', 'Captura')}
+                value={
+                  <span className="flex items-center gap-1.5">
+                    <Activity className="h-3 w-3 text-muted-foreground" />
+                    {diagnostics.latestCaptureDiagnostic.stage}
+                    <span className="text-muted-foreground">· {diagnostics.latestCaptureDiagnostic.status}</span>
+                  </span>
+                }
+              />
+              {diagnostics.latestCaptureDiagnostic.message ? (
+                <p className="break-words rounded-xl bg-secondary/50 px-3 py-2 text-[11px] leading-4 text-muted-foreground">
+                  {diagnostics.latestCaptureDiagnostic.message}
+                </p>
+              ) : null}
+            </>
           ) : null}
 
           {diagnostics.capturedAt ? <InlineKv dim label={t(locale, 'Captured', 'Capturado')} value={formatRelativeTime(locale, diagnostics.capturedAt)} /> : null}

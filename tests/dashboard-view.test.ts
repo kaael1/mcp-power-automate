@@ -193,10 +193,12 @@ const renderPanel = (initialSection: 'flows' | 'review' | 'system' | 'today') =>
   );
 
 describe('dashboard view', () => {
-  it('keeps the popup focused on quick actions and hides detailed review by default', () => {
+  it('keeps the popup focused on automatic status and hides detailed review by default', () => {
     const html = renderPopup();
 
-    expect(html).toContain('Quick actions');
+    expect(html).not.toContain('Quick actions');
+    expect(html).not.toContain('Use as work tab');
+    expect(html).not.toContain('Refresh run');
     expect(html).toContain('Latest run');
     expect(html).toContain('Latest change');
     expect(html).toContain('System details');

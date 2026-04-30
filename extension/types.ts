@@ -1,8 +1,8 @@
 import type { PopupStatusPayload, PopupTokenMeta } from '../server/bridge-types.js';
-import type { FlowCatalog, FlowCatalogItem, FlowSnapshot, Session, TokenAudit } from '../server/schemas.js';
+import type { CaptureDiagnostic, FlowCatalog, FlowCatalogItem, FlowSnapshot, Session, TokenAudit } from '../server/schemas.js';
 
 export const BRIDGE_SIGNAL = 'pa-mcp-bridge';
-export const BRIDGE_URL = 'http://127.0.0.1:17373';
+export const BRIDGE_URL = 'http://127.0.0.1:17373/v1';
 
 export const STORAGE_KEYS = {
   activeFlow: 'mcpPowerAutomate.activeFlow',
@@ -71,6 +71,7 @@ export type TokenFromStorageMessage = {
   scope?: string;
   source: string;
   token: string;
+  tokenSource?: string;
   type: 'token-from-storage';
 };
 
@@ -79,24 +80,23 @@ export type TokenFromMsalMessage = {
   scope?: string;
   source: string;
   token: string;
+  tokenSource?: string;
   type: 'token-from-msal';
+};
+
+export type CaptureDiagnosticMessage = {
+  payload: CaptureDiagnostic;
+  source: string;
+  type: 'capture-diagnostics';
 };
 
 export type PopupRequestMessage =
   | { type: 'get-status' }
   | { type: 'get-dashboard' }
-  | { type: 'refresh-current-tab' }
-  | { type: 'set-active-flow-from-tab' }
-  | { type: 'select-work-tab' }
-  | { flowId: string; type: 'set-active-flow' }
-  | { type: 'refresh-flows' }
-  | { flowId: string; type: 'toggle-pinned-flow' }
-  | { type: 'open-side-panel' }
-  | { type: 'revert-last-update' }
-  | { type: 'refresh-last-run' }
-  | { type: 'resend-session' };
+  | { type: 'open-side-panel' };
 
 export type RuntimeMessage =
+  | CaptureDiagnosticMessage
   | FlowSnapshotMessage
   | TokenAuditMessage
   | TokenFromStorageMessage

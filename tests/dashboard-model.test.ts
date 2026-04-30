@@ -354,6 +354,7 @@ describe('dashboard model', () => {
               envId: 'Default-123',
               lastRunCapturedAt: null,
               lastUpdateCapturedAt: null,
+              latestCaptureDiagnostic: null,
               legacySource: 'captured-modern-session',
               snapshotCapturedAt: null,
               storeHealth: {

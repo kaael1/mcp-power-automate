@@ -1,6 +1,6 @@
 import { createFlowReview } from '../server/client-helpers.js';
 import type { PopupStatusPayload } from '../server/bridge-types.js';
-import type { FlowCatalogItem, LastUpdate, RunSummary } from '../server/schemas.js';
+import type { CaptureDiagnostic, FlowCatalogItem, LastUpdate, RunSummary } from '../server/schemas.js';
 import { t, type Locale } from './i18n.js';
 import type { DashboardPayload } from './types.js';
 
@@ -8,7 +8,7 @@ export type AttentionSeverity = 'critical' | 'info' | 'success' | 'warning';
 
 export interface DashboardAttentionItem {
   actionLabel?: string;
-  actionType?: 'open-side-panel' | 'refresh-current-tab' | 'refresh-last-run' | 'select-work-tab' | 'set-active-flow-from-tab';
+  actionType?: 'open-side-panel';
   description: string;
   id: string;
   severity: AttentionSeverity;
@@ -27,6 +27,7 @@ export interface DashboardModel {
     envId: string | null;
     error: string | null;
     lastSentAt: string | null;
+    latestCaptureDiagnostic: CaptureDiagnostic | null;
     snapshotSource: string | null;
     tokenSource: string | null;
   };
@@ -184,10 +185,15 @@ const hasLegacyTokenAuditCandidate = (payload: PopupStatusPayload) =>
   Boolean(
     payload.tokenAudit?.candidates?.some(
       (candidate) =>
-        candidate.aud === 'https://service.flow.microsoft.com/' ||
-        candidate.aud === 'https://service.powerapps.com/',
+        candidate.aud.replace(/\/+$/, '').toLowerCase() === 'https://service.flow.microsoft.com' ||
+        candidate.aud.replace(/\/+$/, '').toLowerCase() === 'https://service.powerapps.com',
     ),
   );
+
+const getDiagnosticDetailString = (diagnostic: CaptureDiagnostic | null, key: string) => {
+  const value = diagnostic?.details?.[key];
+  return typeof value === 'string' ? value : null;
+};
 
 const buildAttentionItems = ({
   activeTarget,
@@ -214,8 +220,6 @@ const buildAttentionItems = ({
 
   if (error) {
     items.push({
-      actionLabel: t(locale, 'Refresh tab', 'Atualizar aba'),
-      actionType: 'refresh-current-tab',
       description: error,
       id: 'bridge-error',
       severity: 'critical',
@@ -225,12 +229,10 @@ const buildAttentionItems = ({
 
   if (!hasSession) {
     items.push({
-      actionLabel: t(locale, 'Refresh tab', 'Atualizar aba'),
-      actionType: 'refresh-current-tab',
       description: t(
         locale,
-        'Open any Power Automate flow and refresh the tab so the extension can capture page context safely.',
-        'Abra qualquer fluxo do Power Automate e atualize a aba para a extensão capturar o contexto da página com segurança.',
+        'Open or focus any Power Automate flow so the extension can capture page context safely.',
+        'Abra ou foque qualquer fluxo do Power Automate para a extensão capturar o contexto da página com segurança.',
       ),
       id: 'missing-session',
       severity: 'warning',
@@ -240,12 +242,10 @@ const buildAttentionItems = ({
 
   if (selectedTargetMismatch && activeTarget && currentTab) {
     items.push({
-      actionLabel: t(locale, 'Follow this flow', 'Seguir este fluxo'),
-      actionType: 'select-work-tab',
       description: t(
         locale,
-        `This browser tab is showing ${currentTab.displayName}. Sync the assistant if this is the flow you want to work on.`,
-        `Esta aba do navegador está mostrando ${currentTab.displayName}. Sincronize o assistente se este for o fluxo em que você quer trabalhar.`,
+        `This browser tab is showing ${currentTab.displayName}. The MCP will follow the focused captured tab automatically.`,
+        `Esta aba do navegador está mostrando ${currentTab.displayName}. O MCP acompanha automaticamente a aba capturada em foco.`,
       ),
       id: 'target-mismatch',
       severity: 'warning',
@@ -255,12 +255,10 @@ const buildAttentionItems = ({
 
   if (hasSession && !hasLegacyApi) {
     items.push({
-      actionLabel: t(locale, 'Refresh tab', 'Atualizar aba'),
-      actionType: 'refresh-current-tab',
       description: t(
         locale,
-        'The page is connected, but validation and some save operations still need a fresh secure token capture.',
-        'A página está conectada, mas validação e algumas operações de salvar ainda precisam de uma nova captura segura de token.',
+        'The page is connected, but validation and some save operations still need a flow-service token capture.',
+        'A página está conectada, mas validação e algumas operações de salvar ainda precisam capturar um token do serviço de fluxo.',
       ),
       id: 'legacy-missing',
       severity: 'warning',
@@ -270,8 +268,6 @@ const buildAttentionItems = ({
 
   if ((lastRun?.status || '').toLowerCase() === 'failed' && lastRun) {
     items.push({
-      actionLabel: t(locale, 'Check latest run', 'Ver última execução'),
-      actionType: 'refresh-last-run',
       description: lastRun.failedActionName
         ? t(
             locale,
@@ -391,6 +387,8 @@ export const deriveDashboardModel = (payload: DashboardPayload, locale: Locale =
     (Boolean(status.session?.legacyApiUrl && status.session?.legacyToken) ||
       hasLegacyTokenAuditCandidate(status) ||
       Boolean((status.bridge as { hasLegacyApi?: boolean } | null)?.hasLegacyApi));
+  const latestCaptureDiagnostic =
+    context?.diagnostics.latestCaptureDiagnostic || status.bridge?.latestCaptureDiagnostic || null;
   const error =
     status.error ||
     status.lastError ||
@@ -419,14 +417,14 @@ export const deriveDashboardModel = (payload: DashboardPayload, locale: Locale =
     : !hasSession
       ? t(
           locale,
-          'Open a Power Automate flow and refresh the page so we can capture the right context.',
-          'Abra um fluxo do Power Automate e atualize a página para capturarmos o contexto certo.',
+          'Open or focus a Power Automate flow so we can capture the right context automatically.',
+          'Abra ou foque um fluxo do Power Automate para capturarmos o contexto certo automaticamente.',
         )
       : selectedTargetMismatch
         ? t(
             locale,
-            'The browser moved to a different flow. Sync this page if you want the assistant to follow it.',
-            'O navegador mudou para outro fluxo. Sincronize esta página se quiser que o assistente siga esse fluxo.',
+            'The browser moved to a different flow. The MCP will retarget from the focused captured tab.',
+            'O navegador mudou para outro fluxo. O MCP muda o alvo a partir da aba capturada em foco.',
           )
         : (lastRun?.status || '').toLowerCase() === 'failed'
           ? t(
@@ -487,8 +485,9 @@ export const deriveDashboardModel = (payload: DashboardPayload, locale: Locale =
         null,
       error,
       lastSentAt: status.lastSentAt || null,
+      latestCaptureDiagnostic,
       snapshotSource: status.snapshot?.source || null,
-      tokenSource: status.tokenMeta?.source || null,
+      tokenSource: status.tokenMeta?.source || getDiagnosticDetailString(latestCaptureDiagnostic, 'bestSource'),
     },
     flowCatalogMessage: flowCatalog?.message || null,
     hasLegacyApi,

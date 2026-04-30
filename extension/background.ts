@@ -1,8 +1,9 @@
 import type { ContextPayload, PopupStatusPayload, PopupTokenMeta } from '../server/bridge-types.js';
-import type { CapturedSession, FlowSnapshot, LastRun, LastUpdate, Session, TokenAudit } from '../server/schemas.js';
+import type { CaptureDiagnostic, CapturedSession, FlowSnapshot, LastRun, LastUpdate, Session, TokenAudit } from '../server/schemas.js';
 import { decodeJwtPayload, scoreToken } from './token-utils.js';
 import { buildBaseUrl, extractAuthorization, extractFromApiUrl, extractFromPortalUrl } from './url-utils.js';
 import {
+  BRIDGE_SIGNAL,
   BRIDGE_URL,
   type BackgroundState,
   type BackgroundTabState,
@@ -20,10 +21,13 @@ const state: BackgroundState = {
 };
 
 const LEGACY_FLOW_BASE_URL = 'https://api.flow.microsoft.com/';
+const CAPTURE_ALARM_NAME = 'pa-mcp-capture-open-tabs';
+
+const normalizeAudience = (audience: string | undefined) => (audience || '').replace(/\/+$/, '').toLowerCase();
 
 const isLegacyCompatibleAudience = (audience: string | undefined) =>
-  audience === 'https://service.flow.microsoft.com/' ||
-  audience === 'https://service.powerapps.com/';
+  normalizeAudience(audience) === 'https://service.flow.microsoft.com' ||
+  normalizeAudience(audience) === 'https://service.powerapps.com';
 
 const getTabState = (tabId: number) => {
   if (!state.tabs[tabId]) {
@@ -53,6 +57,33 @@ const syncCapturedTabContext = async (
       await maybeSendSession(tabId, session);
     }
   }
+};
+
+const getPowerAutomateFrames = async (tabId: number) => {
+  if (!chrome.webNavigation?.getAllFrames) {
+    return [];
+  }
+
+  return new Promise<chrome.webNavigation.GetAllFrameResultDetails[]>((resolve) => {
+    chrome.webNavigation?.getAllFrames({ tabId }, (frames) => {
+      if (chrome.runtime.lastError) {
+        resolve([]);
+        return;
+      }
+
+      const powerAutomateFrames = (frames || []).filter((frame) => isPowerAutomateUrl(frame.url));
+      const seen = new Set<number>();
+
+      return resolve(
+        powerAutomateFrames.filter((frame) => {
+          if (seen.has(frame.frameId)) return false;
+
+          seen.add(frame.frameId);
+          return true;
+        }),
+      );
+    });
+  });
 };
 
 const getStorage = <T extends StorageShape = StorageShape>(keys: string[]) =>
@@ -229,6 +260,56 @@ const postTokenAuditToBridge = async (audit: TokenAudit) => {
   return body;
 };
 
+type RuntimeTokenMessage = Extract<RuntimeMessage, { type: 'token-from-msal' | 'token-from-storage' }>;
+
+const getRuntimeTokenSource = (message: RuntimeTokenMessage) =>
+  message.tokenSource || (message.source === BRIDGE_SIGNAL ? message.type : message.source) || message.type;
+
+const persistMsalTokenAudit = async ({
+  message,
+  sender,
+  tabState,
+}: {
+  message: RuntimeTokenMessage;
+  sender: chrome.runtime.MessageSender;
+  tabState: BackgroundTabState;
+}) => {
+  if (message.type !== 'token-from-msal') return;
+
+  const payload = decodeJwtPayload(message.token.replace(/^Bearer\s+/i, ''));
+  if (!payload?.aud) return;
+
+  const tokenScore = scoreToken(message.token);
+  const scope = message.scope || tokenScore.scopeText;
+  const normalizedScope = scope.toLowerCase();
+  const portalData = extractFromPortalUrl(sender.tab?.url || tabState.portalUrl || '');
+  const source = getRuntimeTokenSource(message);
+  const audit: TokenAudit = {
+    candidates: [
+      {
+        aud: payload.aud,
+        exp: payload.exp ?? null,
+        hasFlowRead: normalizedScope.includes('powerautomate.flow.read'),
+        hasFlowWrite: normalizedScope.includes('powerautomate.flow.write'),
+        score: message.score ?? tokenScore.score,
+        scope,
+        source,
+        token: message.token,
+      },
+    ],
+    capturedAt: new Date().toISOString(),
+    envId: tabState.envId || portalData?.envId || undefined,
+    flowId: tabState.flowId || portalData?.flowId || undefined,
+    portalUrl: sender.tab?.url || tabState.portalUrl || undefined,
+    source,
+  };
+
+  await postTokenAuditToBridge(audit);
+  await setStorage({
+    [STORAGE_KEYS.tokenAudit]: audit,
+  });
+};
+
 const getLastUpdateFromBridge = async () => {
   const response = await fetch(`${BRIDGE_URL}/last-update`);
   const body = await response.json();
@@ -238,6 +319,23 @@ const getLastUpdateFromBridge = async () => {
   }
 
   return (body.lastUpdate || null) as LastUpdate | null;
+};
+
+const postCaptureDiagnosticToBridge = async (diagnostic: CaptureDiagnostic) => {
+  const response = await fetch(`${BRIDGE_URL}/capture-diagnostics`, {
+    body: JSON.stringify(diagnostic),
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    method: 'POST',
+  });
+  const body = await readJsonResponse<Record<string, unknown>>(response);
+
+  if (!response.ok) {
+    throw new Error((body.error as string | undefined) || `Capture diagnostic bridge request failed with ${response.status}`);
+  }
+
+  return body;
 };
 
 const getContextFromBridge = async () => {
@@ -292,63 +390,6 @@ const getFlowCatalogFromBridge = async () => {
   return flows;
 };
 
-const postRefreshFlowsToBridge = async () => {
-  const response = await fetch(`${BRIDGE_URL}/refresh-flows`, {
-    headers: {
-      'Content-Type': 'application/json',
-    },
-    method: 'POST',
-  });
-  const body = await readJsonResponse<Record<string, unknown>>(response);
-
-  if (!response.ok) {
-    throw new Error((body.error as string | undefined) || `Refresh flows bridge request failed with ${response.status}`);
-  }
-
-  const flows = (body.flows || null) as FlowCatalogPayload | null;
-
-  if (flows) {
-    await setStorage({
-      [STORAGE_KEYS.flowCatalog]: flows,
-    });
-  }
-
-  return flows;
-};
-
-const postSetActiveFlowToBridge = async (flowId: string) => {
-  const response = await fetch(`${BRIDGE_URL}/active-flow`, {
-    body: JSON.stringify({ flowId }),
-    headers: {
-      'Content-Type': 'application/json',
-    },
-    method: 'POST',
-  });
-  const body = await readJsonResponse<Record<string, unknown>>(response);
-
-  if (!response.ok) {
-    throw new Error((body.error as string | undefined) || `Set active flow bridge request failed with ${response.status}`);
-  }
-
-  return body.activeFlow || null;
-};
-
-const postSetActiveFlowFromTabToBridge = async () => {
-  const response = await fetch(`${BRIDGE_URL}/active-flow/from-tab`, {
-    headers: {
-      'Content-Type': 'application/json',
-    },
-    method: 'POST',
-  });
-  const body = await readJsonResponse<Record<string, unknown>>(response);
-
-  if (!response.ok) {
-    throw new Error((body.error as string | undefined) || `Set active flow bridge request failed with ${response.status}`);
-  }
-
-  return body.activeFlow || null;
-};
-
 const postSelectWorkTabForBridge = async (tabId: number) => {
   const response = await fetch(`${BRIDGE_URL}/selected-work-tab`, {
     body: JSON.stringify({ tabId }),
@@ -364,38 +405,6 @@ const postSelectWorkTabForBridge = async (tabId: number) => {
   }
 
   return body;
-};
-
-const postRevertLastUpdateToBridge = async () => {
-  const response = await fetch(`${BRIDGE_URL}/revert-last-update`, {
-    headers: {
-      'Content-Type': 'application/json',
-    },
-    method: 'POST',
-  });
-  const body = await readJsonResponse<Record<string, unknown>>(response);
-
-  if (!response.ok) {
-    throw new Error((body.error as string | undefined) || `Revert bridge request failed with ${response.status}`);
-  }
-
-  return body;
-};
-
-const postRefreshLastRunToBridge = async () => {
-  const response = await fetch(`${BRIDGE_URL}/refresh-last-run`, {
-    headers: {
-      'Content-Type': 'application/json',
-    },
-    method: 'POST',
-  });
-  const body = await readJsonResponse<Record<string, unknown>>(response);
-
-  if (!response.ok) {
-    throw new Error((body.error as string | undefined) || `Refresh run bridge request failed with ${response.status}`);
-  }
-
-  return (body.lastRun || null) as LastRun | null;
 };
 
 const persistSessionStatus = async ({ error, health, sentAt, session }: PersistSessionStatusInput) => {
@@ -574,6 +583,7 @@ const syncRecentFlowIds = async (activeFlow: unknown) => {
 };
 
 const getDashboard = async (): Promise<DashboardPayload> => {
+  await captureExistingPowerAutomateTabs();
   const status = await getPopupStatus();
   let flowCatalog = (await getStorage([STORAGE_KEYS.flowCatalog]))[STORAGE_KEYS.flowCatalog] as FlowCatalogPayload | undefined;
 
@@ -593,39 +603,6 @@ const getDashboard = async (): Promise<DashboardPayload> => {
     recentFlowIds: await getStoredFlowIds(STORAGE_KEYS.recentFlowIds),
     status,
   };
-};
-
-const resendLastSession = async () => {
-  const storage = await getStorage([STORAGE_KEYS.lastSession]);
-  const session = storage[STORAGE_KEYS.lastSession] as Session | undefined;
-
-  if (!session) {
-    throw new Error('No captured session is stored yet.');
-  }
-
-  const activeTab = (await queryTabs({ active: true, currentWindow: true }))[0];
-  if (!activeTab?.id) {
-    throw new Error('No active browser tab was found.');
-  }
-
-  delete state.lastSentSignatures[activeTab.id];
-  await maybeSendSession(activeTab.id, session);
-  return getPopupStatus();
-};
-
-const refreshCurrentTab = async () => {
-  const [tab] = await queryTabs({ active: true, currentWindow: true });
-
-  if (!tab?.id) {
-    throw new Error('No active browser tab was found.');
-  }
-
-  if (!/make\.powerautomate\.com|make\.powerapps\.com|flow\.microsoft\.com/i.test(tab.url || '')) {
-    throw new Error('The active tab is not a Power Automate page.');
-  }
-
-  await chrome.tabs.reload(tab.id);
-  return { ok: true };
 };
 
 const openSidePanel = async (windowId?: number) => {
@@ -673,6 +650,69 @@ const buildSessionFromTabState = (tabState: BackgroundTabState): Session | null 
     legacyToken: tabState.legacyToken,
     portalUrl: tabState.portalUrl,
   };
+};
+
+const isPowerAutomateUrl = (url: string | null | undefined) =>
+  /(^|\.)powerautomate\.com|(^|\.)make\.powerapps\.com|(^|\.)powerapps\.com|(^|\.)flow\.microsoft\.com|(^|\.)powerplatform\.com|(^|\.)dynamics\.com/i.test(url || '');
+
+const injectCaptureScript = async (tabId: number, frameIds?: number[]) => {
+  if (!chrome.scripting?.executeScript) return;
+
+  try {
+    const target: chrome.scripting.InjectionTarget = frameIds?.length
+      ? ({ tabId, frameIds } as chrome.scripting.InjectionTarget)
+      : { tabId, allFrames: true };
+
+    await chrome.scripting.executeScript({
+      files: ['storage-capture.js'],
+      target,
+    });
+  } catch {
+    if (!frameIds?.length) {
+      // If frame-level targeting fails, avoid retrying the same operation recursively.
+      return;
+    }
+
+    try {
+      await chrome.scripting.executeScript({
+        files: ['storage-capture.js'],
+        target: { allFrames: true, tabId },
+      });
+    } catch {
+      // Some browser pages or transient tabs cannot be scripted. WebRequest capture still helps there.
+    }
+  }
+};
+
+const captureVisiblePowerAutomateTab = async (tabId: number) => {
+  const tab = await getTab(tabId);
+  if (!isPowerAutomateUrl(tab?.url)) return;
+
+  const frames = await getPowerAutomateFrames(tabId);
+  const frameIds = frames.map((frame) => frame.frameId);
+
+  await injectCaptureScript(tabId, frameIds);
+
+  const tabState = getTabState(tabId);
+  await hydrateTabFromPortalUrl(tabId, tabState);
+
+  if (tabState.envId && tabState.flowId) {
+    await postSelectWorkTabForBridge(tabId).catch(() => undefined);
+  }
+
+  const session = buildSessionFromTabState(tabState);
+  if (session) {
+    await maybeSendSession(tabId, session);
+  }
+};
+
+const captureExistingPowerAutomateTabs = async () => {
+  const tabs = await queryTabs({});
+  await Promise.all(
+    tabs
+      .filter((tab) => typeof tab.id === 'number' && isPowerAutomateUrl(tab.url))
+      .map((tab) => captureVisiblePowerAutomateTab(tab.id as number).catch(() => undefined)),
+  );
 };
 
 type ApiRequestDetails = {
@@ -724,6 +764,34 @@ chrome.tabs.onRemoved.addListener((tabId) => {
   delete state.lastSentSignatures[tabId];
   void postRemoveCapturedSessionToBridge(tabId).catch(() => undefined);
 });
+
+chrome.tabs.onActivated.addListener(({ tabId }) => {
+  void captureVisiblePowerAutomateTab(tabId).catch(() => undefined);
+});
+
+chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
+  if (changeInfo.status !== 'complete' && !changeInfo.url) return;
+  if (!isPowerAutomateUrl(tab.url || changeInfo.url)) return;
+  void captureVisiblePowerAutomateTab(tabId).catch(() => undefined);
+});
+
+chrome.runtime.onInstalled.addListener(() => {
+  chrome.alarms?.create(CAPTURE_ALARM_NAME, { periodInMinutes: 0.5 });
+  void captureExistingPowerAutomateTabs();
+});
+
+chrome.runtime.onStartup.addListener(() => {
+  chrome.alarms?.create(CAPTURE_ALARM_NAME, { periodInMinutes: 0.5 });
+  void captureExistingPowerAutomateTabs();
+});
+
+chrome.alarms?.onAlarm.addListener((alarm) => {
+  if (alarm.name !== CAPTURE_ALARM_NAME) return;
+  void captureExistingPowerAutomateTabs();
+});
+
+chrome.alarms?.create(CAPTURE_ALARM_NAME, { periodInMinutes: 0.5 });
+void captureExistingPowerAutomateTabs();
 
 chrome.webRequest.onBeforeSendHeaders.addListener(
   (details) => {
@@ -780,6 +848,18 @@ chrome.runtime.onMessage.addListener((message: RuntimeMessage, sender, sendRespo
     return true;
   }
 
+  if (message?.type === 'capture-diagnostics') {
+    const targetTabId = sender?.tab?.id;
+    postCaptureDiagnosticToBridge({
+      ...message.payload,
+      frameId: typeof sender?.frameId === 'number' ? sender.frameId : message.payload.frameId,
+      tabId: typeof targetTabId === 'number' ? targetTabId : message.payload.tabId,
+    })
+      .then(() => sendResponse({ ok: true }))
+      .catch((error) => sendResponse({ error: error instanceof Error ? error.message : String(error) }));
+    return true;
+  }
+
   if (message?.type === 'token-from-storage' || message?.type === 'token-from-msal') {
     const targetTabId = sender?.tab?.id;
 
@@ -794,9 +874,21 @@ chrome.runtime.onMessage.addListener((message: RuntimeMessage, sender, sendRespo
       if (isLegacyCompatibleAudience(payload?.aud)) {
         tabState.legacyApiUrl = LEGACY_FLOW_BASE_URL;
         tabState.legacyToken = message.token;
+
+        if (!tabState.apiUrl) {
+          tabState.apiUrl = tabState.legacyApiUrl;
+          tabState.apiToken = message.token;
+        }
       }
 
-      void maybePromoteApiToken(tabState, message.token, message.source || 'msal-silent').then(() => {
+      const tokenSource = getRuntimeTokenSource(message);
+      void persistMsalTokenAudit({
+        message,
+        sender,
+        tabState,
+      }).catch(() => undefined);
+
+      void maybePromoteApiToken(tabState, message.token, tokenSource).then(() => {
         if (tabState.apiUrl && tabState.envId && tabState.flowId) {
           const session = buildSessionFromTabState(tabState);
           if (session) {
@@ -826,105 +918,9 @@ chrome.runtime.onMessage.addListener((message: RuntimeMessage, sender, sendRespo
     return true;
   }
 
-  if (message?.type === 'refresh-current-tab') {
-    refreshCurrentTab()
-      .then(async () => sendResponse(await getDashboard()))
-      .catch((error) => sendResponse({ error: error instanceof Error ? error.message : String(error) }));
-    return true;
-  }
-
-  if (message?.type === 'set-active-flow-from-tab') {
-    postSetActiveFlowFromTabToBridge()
-      .then(async (activeFlow) => {
-        await syncRecentFlowIds(activeFlow);
-        sendResponse(await getDashboard());
-      })
-      .catch((error) => sendResponse({ error: error instanceof Error ? error.message : String(error) }));
-    return true;
-  }
-
-  if (message?.type === 'select-work-tab') {
-    const targetTabId = sender?.tab?.id;
-
-    const selectPromise =
-      typeof targetTabId === 'number' ?
-        postSelectWorkTabForBridge(targetTabId)
-      : queryTabs({ active: true, currentWindow: true }).then(([tab]) => {
-          if (!tab?.id) {
-            throw new Error('No active browser tab was found.');
-          }
-
-          return postSelectWorkTabForBridge(tab.id);
-        });
-
-    selectPromise
-      .then(async () => sendResponse(await getDashboard()))
-      .catch((error) => sendResponse({ error: error instanceof Error ? error.message : String(error) }));
-    return true;
-  }
-
-  if (message?.type === 'set-active-flow') {
-    postSetActiveFlowToBridge(message.flowId)
-      .then(async (activeFlow) => {
-        await syncRecentFlowIds(activeFlow);
-        sendResponse(await getDashboard());
-      })
-      .catch((error) => sendResponse({ error: error instanceof Error ? error.message : String(error) }));
-    return true;
-  }
-
-  if (message?.type === 'refresh-flows') {
-    postRefreshFlowsToBridge()
-      .then(async () => sendResponse(await getDashboard()))
-      .catch((error) => sendResponse({ error: error instanceof Error ? error.message : String(error) }));
-    return true;
-  }
-
-  if (message?.type === 'toggle-pinned-flow') {
-    getStoredFlowIds(STORAGE_KEYS.pinnedFlowIds)
-      .then(async (pinnedIds) => {
-        const next = pinnedIds.includes(message.flowId)
-          ? pinnedIds.filter((flowId) => flowId !== message.flowId)
-          : [message.flowId, ...pinnedIds].slice(0, 12);
-        await saveStoredFlowIds(STORAGE_KEYS.pinnedFlowIds, next);
-        sendResponse(await getDashboard());
-      })
-      .catch((error) => sendResponse({ error: error instanceof Error ? error.message : String(error) }));
-    return true;
-  }
-
   if (message?.type === 'open-side-panel') {
     openSidePanel(sender?.tab?.windowId)
       .then(sendResponse)
-      .catch((error) => sendResponse({ error: error instanceof Error ? error.message : String(error) }));
-    return true;
-  }
-
-  if (message?.type === 'revert-last-update') {
-    postRevertLastUpdateToBridge()
-      .then(async () => {
-        await refreshCurrentTab();
-        sendResponse(await getDashboard());
-      })
-      .catch((error) => sendResponse({ error: error instanceof Error ? error.message : String(error) }));
-    return true;
-  }
-
-  if (message?.type === 'refresh-last-run') {
-    postRefreshLastRunToBridge()
-      .then(async (lastRun) => {
-        await setStorage({
-          [STORAGE_KEYS.lastRun]: lastRun,
-        });
-        sendResponse(await getDashboard());
-      })
-      .catch((error) => sendResponse({ error: error instanceof Error ? error.message : String(error) }));
-    return true;
-  }
-
-  if (message?.type === 'resend-session') {
-    resendLastSession()
-      .then(async () => sendResponse(await getDashboard()))
       .catch((error) => sendResponse({ error: error instanceof Error ? error.message : String(error) }));
     return true;
   }

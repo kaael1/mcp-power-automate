@@ -40,7 +40,7 @@ export function SignalGrid({
       icon: <ShieldCheck className="h-4 w-4" />,
       label: t(locale, 'Action readiness', 'Pronto para agir'),
       ok: model.hasLegacyApi,
-      value: model.hasLegacyApi ? t(locale, 'Ready', 'Pronto') : t(locale, 'Needs refresh', 'Precisa atualizar'),
+      value: model.hasLegacyApi ? t(locale, 'Ready', 'Pronto') : t(locale, 'Capturing token', 'Capturando token'),
     },
     {
       icon: <Clock className="h-4 w-4" />,

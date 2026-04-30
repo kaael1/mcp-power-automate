@@ -5,7 +5,6 @@ import {
   History,
   Languages,
   LayoutList,
-  RefreshCcw,
   Shield,
   Workflow,
 } from 'lucide-react';
@@ -15,14 +14,12 @@ import type { DashboardModel } from '../dashboard-model.js';
 import { LOCALE_OPTIONS, t, type Locale } from '../i18n.js';
 import { cn } from '../lib/utils.js';
 import type { DashboardAction } from '../use-dashboard.js';
-import { ActionGroup } from './pa/actions.js';
 import { AccessScopeBadge, PinBadge, SectionLabel, StatusDot } from './pa/atoms.js';
 import { AttentionBannerSingle, AttentionItemRow, LastRunCard, LastUpdateCard } from './pa/cards.js';
 import { DiagnosticsBlock } from './pa/diagnostics.js';
 import { FlowRefRow } from './pa/flow-ref.js';
 import { LastUpdateReview } from './pa/review.js';
 import { SignalGrid } from './pa/signal-grid.js';
-import { Button } from './ui/button.js';
 import { Input } from './ui/input.js';
 import { Skeleton } from './ui/skeleton.js';
 
@@ -125,11 +122,9 @@ function EmptyStateCard({
 function CurrentFlowPanel({
   locale,
   model,
-  onAction,
 }: {
   locale: Locale;
   model: DashboardModel;
-  onAction: (action: DashboardAction) => void;
 }) {
   const selectedTarget = getDisplayedTarget(model);
   const showTabMismatch = Boolean(model.selectedTargetMismatch && model.currentTab);
@@ -181,9 +176,6 @@ function CurrentFlowPanel({
                 )}
               </p>
             </div>
-            <Button className="shrink-0" onClick={() => onAction({ type: 'select-work-tab' })} size="sm" variant="outline">
-              {t(locale, 'Use as work tab', 'Usar como aba de trabalho')}
-            </Button>
           </div>
         </div>
       ) : null}
@@ -211,43 +203,6 @@ function RecentActivityPanel({
   );
 }
 
-function QuickActionsPanel({
-  includeOpenPanel,
-  locale,
-  model,
-  onAction,
-}: {
-  includeOpenPanel?: boolean;
-  locale: Locale;
-  model: DashboardModel;
-  onAction: (action: DashboardAction) => void;
-}) {
-  return (
-    <div className="rounded-2xl border border-border bg-white p-4 shadow-sm">
-      <SectionLabel>{t(locale, 'Quick actions', 'Ações rápidas')}</SectionLabel>
-      <div className="mt-3">
-        <ActionGroup
-          canUseCurrentTab={Boolean(model.currentTab?.flowId)}
-          hasLastUpdate={Boolean(model.lastUpdate)}
-          hasSession={model.hasSession}
-          includeOpenPanel={includeOpenPanel}
-          locale={locale}
-          onAction={onAction}
-        />
-      </div>
-      {includeOpenPanel ? (
-        <p className="mt-3 text-[11px] leading-5 text-muted-foreground">
-          {t(
-            locale,
-            'Open the side panel when you need the full review or system details.',
-            'Abra o painel lateral quando precisar da revisão completa ou dos detalhes do sistema.',
-          )}
-        </p>
-      ) : null}
-    </div>
-  );
-}
-
 function PopupDashboard({
   locale,
   model,
@@ -265,14 +220,13 @@ function PopupDashboard({
     <div className="flex w-[432px] min-h-[560px] max-h-[640px] flex-col bg-background font-sans text-foreground">
       <div className="flex flex-col gap-3 p-4">
         <PopupHeader locale={locale} model={model} onLocaleChange={onLocaleChange} />
-        <CurrentFlowPanel locale={locale} model={model} onAction={onAction} />
+        <CurrentFlowPanel locale={locale} model={model} />
         {topAttention ? (
           <AttentionBannerSingle
             item={topAttention}
             onAction={() => (topAttention.actionType ? onAction({ type: topAttention.actionType }) : undefined)}
           />
         ) : null}
-        <QuickActionsPanel includeOpenPanel locale={locale} model={model} onAction={onAction} />
         <RecentActivityPanel locale={locale} model={model} />
         <DiagnosticsBlock
           bridgeMode={model.bridgeMode}
@@ -369,7 +323,7 @@ function TodaySection({
 
       <div className="grid gap-5 xl:grid-cols-[1.05fr_0.95fr]">
         <div className="space-y-4">
-          <CurrentFlowPanel locale={locale} model={model} onAction={onAction} />
+          <CurrentFlowPanel locale={locale} model={model} />
 
           {actionableItems.length > 0 ? (
             <div className="space-y-2">
@@ -401,7 +355,6 @@ function TodaySection({
         </div>
 
         <div className="space-y-4">
-          <QuickActionsPanel locale={locale} model={model} onAction={onAction} />
           <SignalGrid locale={locale} model={model} />
           <RecentActivityPanel locale={locale} model={model} />
         </div>
@@ -413,11 +366,9 @@ function TodaySection({
 function FlowsSection({
   locale,
   model,
-  onAction,
 }: {
   locale: Locale;
   model: DashboardModel;
-  onAction: (action: DashboardAction) => void;
 }) {
   const [search, setSearch] = useState('');
   const filteredCatalog = useMemo(
@@ -447,10 +398,6 @@ function FlowsSection({
             placeholder={t(locale, 'Search flows...', 'Buscar fluxos...')}
             value={search}
           />
-          <Button className="rounded-xl" onClick={() => onAction({ type: 'refresh-flows' })} variant="outline">
-            <RefreshCcw className="h-4 w-4" />
-            {t(locale, 'Refresh', 'Atualizar')}
-          </Button>
         </div>
       </div>
 
@@ -462,24 +409,10 @@ function FlowsSection({
               <div className="space-y-2">
                 {model.pinnedFlows.map((flow) => (
                   <FlowRefRow
-                    actions={
-                      <button
-                        className="rounded-lg p-1.5 text-muted-foreground transition-colors hover:bg-amber-500/10 hover:text-amber-500"
-                        onClick={(event) => {
-                          event.stopPropagation();
-                          onAction({ flowId: flow.flowId, type: 'toggle-pinned-flow' });
-                        }}
-                        title={t(locale, 'Unpin flow', 'Desafixar fluxo')}
-                        type="button"
-                      >
-                        {t(locale, 'Unpin', 'Desafixar')}
-                      </button>
-                    }
                     flow={flow}
                     isActive={activeFlowId === flow.flowId}
                     key={flow.flowId}
                     locale={locale}
-                    onClick={() => onAction({ flowId: flow.flowId, type: 'set-active-flow' })}
                   />
                 ))}
               </div>
@@ -492,24 +425,10 @@ function FlowsSection({
               <div className="space-y-2">
                 {model.recentFlows.map((flow) => (
                   <FlowRefRow
-                    actions={
-                      <button
-                        className="rounded-lg p-1.5 text-muted-foreground transition-colors hover:bg-amber-500/10 hover:text-amber-500"
-                        onClick={(event) => {
-                          event.stopPropagation();
-                          onAction({ flowId: flow.flowId, type: 'toggle-pinned-flow' });
-                        }}
-                        title={t(locale, 'Pin flow', 'Fixar fluxo')}
-                        type="button"
-                      >
-                        {t(locale, 'Pin', 'Fixar')}
-                      </button>
-                    }
                     flow={flow}
                     isActive={activeFlowId === flow.flowId}
                     key={flow.flowId}
                     locale={locale}
-                    onClick={() => onAction({ flowId: flow.flowId, type: 'set-active-flow' })}
                   />
                 ))}
               </div>
@@ -530,32 +449,6 @@ function FlowsSection({
           ) : (
             filteredCatalog.map((flow) => (
               <FlowRefRow
-                actions={
-                  <div className="flex items-center gap-1">
-                    <button
-                      className="rounded-lg p-1.5 text-muted-foreground transition-colors hover:bg-primary/10 hover:text-primary"
-                      onClick={(event) => {
-                        event.stopPropagation();
-                        onAction({ flowId: flow.flowId, type: 'set-active-flow' });
-                      }}
-                      title={t(locale, 'Choose this flow', 'Escolher este fluxo')}
-                      type="button"
-                    >
-                      {t(locale, 'Select', 'Selecionar')}
-                    </button>
-                    <button
-                      className="rounded-lg p-1.5 text-muted-foreground transition-colors hover:bg-amber-500/10 hover:text-amber-500"
-                      onClick={(event) => {
-                        event.stopPropagation();
-                        onAction({ flowId: flow.flowId, type: 'toggle-pinned-flow' });
-                      }}
-                      title={t(locale, 'Pin or unpin', 'Fixar ou desafixar')}
-                      type="button"
-                    >
-                      {t(locale, 'Pin', 'Fixar')}
-                    </button>
-                  </div>
-                }
                 flow={{
                   accessScope: flow.accessScope,
                   displayName: flow.displayName,
@@ -567,7 +460,6 @@ function FlowsSection({
                 isActive={activeFlowId === flow.flowId}
                 key={flow.flowId}
                 locale={locale}
-                onClick={() => onAction({ flowId: flow.flowId, type: 'set-active-flow' })}
               />
             ))
           )}
@@ -580,11 +472,9 @@ function FlowsSection({
 export function ReviewSection({
   locale,
   model,
-  onAction,
 }: {
   locale: Locale;
   model: DashboardModel;
-  onAction: (action: DashboardAction) => void;
 }) {
   return (
     <div className="space-y-5">
@@ -599,18 +489,12 @@ export function ReviewSection({
             )}
           </p>
         </div>
-
-        {model.lastUpdate ? (
-          <Button onClick={() => onAction({ type: 'revert-last-update' })} variant="outline">
-            {t(locale, 'Undo change', 'Desfazer')}
-          </Button>
-        ) : null}
       </div>
 
       {model.lastUpdate ? (
         <div className="grid gap-4 xl:grid-cols-[320px_1fr]">
           <div className="space-y-4">
-            <CurrentFlowPanel locale={locale} model={model} onAction={onAction} />
+            <CurrentFlowPanel locale={locale} model={model} />
             <LastUpdateCard locale={locale} update={model.lastUpdate} />
           </div>
           <LastUpdateReview locale={locale} update={model.lastUpdate} />
@@ -714,8 +598,8 @@ export function SidePanelDashboardView({
   const [activeSection, setActiveSection] = useState<SidePanelSection>(initialSection);
 
   const sections: Record<SidePanelSection, ReactNode> = {
-    flows: <FlowsSection locale={locale} model={model} onAction={onAction} />,
-    review: <ReviewSection locale={locale} model={model} onAction={onAction} />,
+    flows: <FlowsSection locale={locale} model={model} />,
+    review: <ReviewSection locale={locale} model={model} />,
     system: <SystemSection locale={locale} model={model} onLocaleChange={onLocaleChange} />,
     today: <TodaySection locale={locale} model={model} onAction={onAction} />,
   };
@@ -757,7 +641,6 @@ export function ErrorView({
   error,
   locale,
   onLocaleChange,
-  onRetry,
   surface,
 }: {
   bridgeHealth: HealthPayload | null;
@@ -789,12 +672,6 @@ export function ErrorView({
             </div>
           </div>
 
-          <div className="mt-4 flex gap-3">
-            <Button className="rounded-xl text-[13px]" onClick={onRetry}>
-              <RefreshCcw className="h-4 w-4" />
-              {t(locale, 'Try again', 'Tentar de novo')}
-            </Button>
-          </div>
         </div>
       </div>
     </div>
