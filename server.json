@@ -1,6 +1,6 @@
 {
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
-  "description": "Local MCP for AI-operated Power Automate flows with automatic browser-backed context, review diff, and rollback.",
+  "description": "Local MCP for automated Power Automate flow editing, validation, run and rollback.",
   "version": "1.0.0",
   "name": "io.github.kaael1/mcp-power-automate",
   "packages": [
