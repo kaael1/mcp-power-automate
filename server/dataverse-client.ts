@@ -17,6 +17,11 @@ const BAP_AUDIENCES = new Set([
   'https://service.powerapps.com',
 ]);
 
+const POWERPLATFORM_AUDIENCES = new Set([
+  'https://api.powerplatform.com/',
+  'https://api.powerplatform.com',
+]);
+
 const stripTrailingSlash = (value: string) => value.replace(/\/+$/, '');
 
 const safeUrlHost = (value: string): string | null => {
@@ -78,21 +83,48 @@ const sessionLegacyTokenAsCandidate = (): TokenCandidate | null => {
   };
 };
 
-export const pickBapToken = (): TokenCandidate | null => {
+const findCandidateByAudience = (audiences: Set<string>): TokenCandidate | null => {
   const audit = getTokenAudit();
   const fromAudit = audit?.candidates.find((candidate) => {
     if (!isUnexpired(candidate)) return false;
     const aud = stripTrailingSlash(candidate.aud);
-    return BAP_AUDIENCES.has(`${aud}/`) || BAP_AUDIENCES.has(aud);
+    return audiences.has(`${aud}/`) || audiences.has(aud);
   });
   if (fromAudit) return fromAudit;
-  // Fallback: BAP API accepts service.powerapps.com tokens; reuse the legacy
-  // flow token if its audience matches.
   const legacy = sessionLegacyTokenAsCandidate();
   if (!legacy) return null;
   const aud = stripTrailingSlash(legacy.aud);
-  if (BAP_AUDIENCES.has(`${aud}/`) || BAP_AUDIENCES.has(aud)) {
+  if (audiences.has(`${aud}/`) || audiences.has(aud)) {
     return legacy;
+  }
+  return null;
+};
+
+export const pickBapToken = (): TokenCandidate | null => findCandidateByAudience(BAP_AUDIENCES);
+
+const sessionApiTokenAsCandidate = (): TokenCandidate | null => {
+  const session = getSession();
+  if (!session?.apiToken) return null;
+  const rawToken = session.apiToken.replace(/^Bearer\s+/i, '');
+  if (!isLegacyTokenJwt(rawToken)) return null;
+  const aud = decodeJwtAud(rawToken);
+  if (!aud) return null;
+  return {
+    aud,
+    source: 'session-api-token',
+    token: rawToken,
+  };
+};
+
+export const pickPowerPlatformToken = (): TokenCandidate | null => {
+  const fromAudit = findCandidateByAudience(POWERPLATFORM_AUDIENCES);
+  if (fromAudit) return fromAudit;
+  // Reuse the modern apiToken from session.json if its audience matches.
+  const apiToken = sessionApiTokenAsCandidate();
+  if (!apiToken) return null;
+  const aud = stripTrailingSlash(apiToken.aud);
+  if (POWERPLATFORM_AUDIENCES.has(`${aud}/`) || POWERPLATFORM_AUDIENCES.has(aud)) {
+    return apiToken;
   }
   return null;
 };
@@ -120,14 +152,14 @@ export const hasManageSolutionsTokens = (envId: string | null): {
   if (!envId) {
     return { available: false, reasonCode: 'NO_SESSION' };
   }
-  const bap = pickBapToken();
-  if (!bap) {
+  // We can resolve env metadata via either BAP (api.bap.microsoft.com) or
+  // Power Platform API (api.powerplatform.com); having either is enough.
+  const haveResolver = pickBapToken() || pickPowerPlatformToken();
+  if (!haveResolver) {
     return { available: false, reasonCode: 'BAP_TOKEN_MISSING' };
   }
   const cached = getDataverseOrgRecord(envId);
   if (!cached) {
-    // Not yet resolved — but BAP token is present so we can resolve. Mark available
-    // so the capability shows true, deferring instance-URL fetch to first use.
     return { available: true, reasonCode: null };
   }
   const dv = pickDataverseToken(cached.instanceUrl);
@@ -184,6 +216,84 @@ const toDataverseError = (response: Response, body: unknown, contextLabel: strin
   return new Error(String(message));
 };
 
+interface PowerPlatformEnvironmentResponse {
+  properties?: {
+    linkedEnvironmentMetadata?: {
+      domainName?: string;
+      instanceApiUrl?: string;
+      instanceUrl?: string;
+      uniqueName?: string;
+    };
+  };
+}
+
+const fetchInstanceMetadata = async (envId: string): Promise<{
+  instanceApiUrl: string;
+  instanceUrl: string;
+  uniqueName: string | undefined;
+} | null> => {
+  // Prefer the Power Platform API (api.powerplatform.com) since the user's
+  // existing flow MCP captures tokens for that audience automatically.
+  const ppt = pickPowerPlatformToken();
+  if (ppt) {
+    const url = new URL(`https://api.powerplatform.com/environments/${encodeURIComponent(envId)}`);
+    url.searchParams.set('api-version', '2022-03-01-preview');
+    url.searchParams.set('$expand', 'properties.linkedEnvironmentMetadata');
+    const response = await fetch(url.toString(), {
+      method: 'GET',
+      headers: { Authorization: ensureBearer(ppt.token), Accept: 'application/json' },
+    });
+    if (response.ok) {
+      const parsedBody = (await readResponseBody(response)) as PowerPlatformEnvironmentResponse | null;
+      const linked = parsedBody?.properties?.linkedEnvironmentMetadata;
+      if (linked?.instanceApiUrl && linked.instanceUrl) {
+        return {
+          instanceApiUrl: stripTrailingSlash(linked.instanceApiUrl),
+          instanceUrl: stripTrailingSlash(linked.instanceUrl),
+          uniqueName: linked.uniqueName,
+        };
+      }
+    } else if (response.status !== 401 && response.status !== 403) {
+      // Non-auth failure (e.g. environment lacks Dataverse) — propagate.
+      const parsedBody = await readResponseBody(response);
+      throw toDataverseError(response, parsedBody, 'Power Platform environment metadata');
+    }
+  }
+
+  const bap = pickBapToken();
+  if (bap) {
+    const url = new URL(
+      `https://api.bap.microsoft.com/providers/Microsoft.BusinessAppPlatform/scopes/admin/environments/${encodeURIComponent(envId)}`,
+    );
+    url.searchParams.set('api-version', '2020-10-01');
+    url.searchParams.set('$expand', 'properties.linkedEnvironmentMetadata');
+    const response = await fetch(url.toString(), {
+      method: 'GET',
+      headers: { Authorization: ensureBearer(bap.token), Accept: 'application/json' },
+    });
+    const parsedBody = await readResponseBody(response);
+    if (!response.ok) {
+      throw toDataverseError(response, parsedBody, 'BAP environment metadata');
+    }
+    const linked = (parsedBody as BapEnvironmentResponse | null)?.properties?.linkedEnvironmentMetadata;
+    if (linked?.instanceApiUrl && linked.instanceUrl) {
+      return {
+        instanceApiUrl: stripTrailingSlash(linked.instanceApiUrl),
+        instanceUrl: stripTrailingSlash(linked.instanceUrl),
+        uniqueName: linked.uniqueName,
+      };
+    }
+    throw new PowerAutomateError({
+      code: 'DATAVERSE_INSTANCE_NOT_FOUND',
+      message: `BAP returned no Dataverse instance for environment ${envId}. The environment may not have a Dataverse database provisioned.`,
+      retryable: false,
+      details: parsedBody,
+    });
+  }
+
+  return null;
+};
+
 export const resolveInstanceUrl = async (envId: string): Promise<DataverseInstance> => {
   const cached = getDataverseOrgRecord(envId);
   if (cached) {
@@ -195,55 +305,24 @@ export const resolveInstanceUrl = async (envId: string): Promise<DataverseInstan
     };
   }
 
-  const bap = pickBapToken();
-  if (!bap) {
+  const metadata = await fetchInstanceMetadata(envId);
+  if (!metadata) {
     throw new PowerAutomateError({
       code: 'BAP_TOKEN_MISSING',
       message:
-        'No Business Application Platform (BAP) token captured. Open https://make.powerapps.com/environments/' +
+        'No Power Platform admin token captured. Open https://make.powerapps.com/environments/' +
         envId +
-        ' in the browser with the extension enabled so a BAP token can be captured.',
+        ' (or any Power Automate flow) in the browser with the extension enabled so a token can be captured.',
       retryable: true,
-    });
-  }
-
-  const url = new URL(
-    `https://api.bap.microsoft.com/providers/Microsoft.BusinessAppPlatform/scopes/admin/environments/${encodeURIComponent(envId)}`,
-  );
-  url.searchParams.set('api-version', '2020-10-01');
-  url.searchParams.set('$expand', 'properties.linkedEnvironmentMetadata');
-
-  const response = await fetch(url.toString(), {
-    method: 'GET',
-    headers: {
-      Authorization: ensureBearer(bap.token),
-      Accept: 'application/json',
-    },
-  });
-  const parsedBody = await readResponseBody(response);
-  if (!response.ok) {
-    throw toDataverseError(response, parsedBody, 'BAP environment metadata');
-  }
-
-  const linked = (parsedBody as BapEnvironmentResponse | null)?.properties?.linkedEnvironmentMetadata;
-  if (!linked?.instanceApiUrl || !linked?.instanceUrl) {
-    throw new PowerAutomateError({
-      code: 'DATAVERSE_INSTANCE_NOT_FOUND',
-      message:
-        'BAP returned no Dataverse instance for environment ' +
-        envId +
-        '. The environment may not have a Dataverse database provisioned.',
-      retryable: false,
-      details: parsedBody,
     });
   }
 
   const record: DataverseOrgRecord = {
     envId,
-    instanceApiUrl: stripTrailingSlash(linked.instanceApiUrl),
-    instanceUrl: stripTrailingSlash(linked.instanceUrl),
+    instanceApiUrl: metadata.instanceApiUrl,
+    instanceUrl: metadata.instanceUrl,
     resolvedAt: new Date().toISOString(),
-    uniqueName: linked.uniqueName,
+    uniqueName: metadata.uniqueName,
   };
   await saveDataverseOrgRecord(record);
 
