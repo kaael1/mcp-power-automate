@@ -1,5 +1,6 @@
 import { PowerAutomateError, PowerAutomateSessionError } from './errors.js';
 import { getTokenAudit } from './token-audit-store.js';
+import { getSession } from './session-store.js';
 import {
   getDataverseOrgRecord,
   saveDataverseOrgRecord,
@@ -46,16 +47,54 @@ const isUnexpired = (candidate: TokenCandidate): boolean => {
   return candidate.exp * 1000 > Date.now();
 };
 
+const isLegacyTokenJwt = (token: string): boolean => /^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/.test(token);
+
+const decodeJwtAud = (token: string): string | null => {
+  try {
+    const raw = token.replace(/^Bearer\s+/i, '');
+    const [, payload] = raw.split('.');
+    if (!payload) return null;
+    const normalized = payload.replace(/-/g, '+').replace(/_/g, '/');
+    const padded = normalized.padEnd(normalized.length + ((4 - (normalized.length % 4)) % 4), '=');
+    const json = Buffer.from(padded, 'base64').toString('utf8');
+    const obj = JSON.parse(json) as { aud?: string };
+    return typeof obj.aud === 'string' ? obj.aud : null;
+  } catch {
+    return null;
+  }
+};
+
+const sessionLegacyTokenAsCandidate = (): TokenCandidate | null => {
+  const session = getSession();
+  if (!session?.legacyToken) return null;
+  const rawToken = session.legacyToken.replace(/^Bearer\s+/i, '');
+  if (!isLegacyTokenJwt(rawToken)) return null;
+  const aud = decodeJwtAud(rawToken);
+  if (!aud) return null;
+  return {
+    aud,
+    source: 'session-legacy-token',
+    token: rawToken,
+  };
+};
+
 export const pickBapToken = (): TokenCandidate | null => {
   const audit = getTokenAudit();
-  if (!audit) return null;
-  return (
-    audit.candidates.find((candidate) => {
-      if (!isUnexpired(candidate)) return false;
-      const aud = stripTrailingSlash(candidate.aud);
-      return BAP_AUDIENCES.has(`${aud}/`) || BAP_AUDIENCES.has(aud);
-    }) || null
-  );
+  const fromAudit = audit?.candidates.find((candidate) => {
+    if (!isUnexpired(candidate)) return false;
+    const aud = stripTrailingSlash(candidate.aud);
+    return BAP_AUDIENCES.has(`${aud}/`) || BAP_AUDIENCES.has(aud);
+  });
+  if (fromAudit) return fromAudit;
+  // Fallback: BAP API accepts service.powerapps.com tokens; reuse the legacy
+  // flow token if its audience matches.
+  const legacy = sessionLegacyTokenAsCandidate();
+  if (!legacy) return null;
+  const aud = stripTrailingSlash(legacy.aud);
+  if (BAP_AUDIENCES.has(`${aud}/`) || BAP_AUDIENCES.has(aud)) {
+    return legacy;
+  }
+  return null;
 };
 
 export const pickDataverseToken = (instanceUrl: string): TokenCandidate | null => {
