@@ -276,7 +276,26 @@ export const createBridgeServer = () =>
       if (request.method === 'POST' && requestUrl.pathname === '/token-audit') {
         const body = await readJsonBody(request);
         const audit = tokenAuditSchema.parse(body);
-        const savedAudit = await saveTokenAudit(audit);
+        // Merge with existing audit so single-candidate POSTs from auxiliary
+        // sources (BAP / Dataverse webRequest captures) accumulate alongside
+        // full storage scans rather than overwriting them. Keep newest 50.
+        const existing = getTokenAudit();
+        const seen = new Set<string>();
+        const merged: typeof audit.candidates = [];
+        for (const candidate of audit.candidates) {
+          if (seen.has(candidate.token)) continue;
+          seen.add(candidate.token);
+          merged.push(candidate);
+        }
+        for (const candidate of existing?.candidates ?? []) {
+          if (seen.has(candidate.token)) continue;
+          seen.add(candidate.token);
+          merged.push(candidate);
+        }
+        const savedAudit = await saveTokenAudit({
+          ...audit,
+          candidates: merged.slice(0, 50),
+        });
         sendJson(response, 200, {
           candidateCount: savedAudit.candidates.length,
           capturedAt: savedAudit.capturedAt,

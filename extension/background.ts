@@ -739,6 +739,47 @@ chrome.webRequest.onBeforeSendHeaders.addListener(
   ['requestHeaders', 'extraHeaders'],
 );
 
+const handleAuxiliaryAudienceRequest = (details: ApiRequestDetails) => {
+  const token = extractAuthorization(details.requestHeaders);
+  if (!token) return;
+  const raw = token.replace(/^Bearer\s+/i, '');
+  const payload = decodeJwtPayload(raw);
+  if (!payload?.aud) return;
+  const scope = payload.scp || payload.roles?.join(' ') || '';
+  const audit: TokenAudit = {
+    candidates: [
+      {
+        aud: payload.aud,
+        exp: payload.exp ?? null,
+        hasFlowRead: false,
+        hasFlowWrite: false,
+        score: 0,
+        scope,
+        source: `webRequest:${new URL(details.url).host}`,
+        token,
+      },
+    ],
+    capturedAt: new Date().toISOString(),
+    portalUrl: details.url,
+    source: 'webRequest-auxiliary',
+  };
+  postTokenAuditToBridge(audit).catch(() => undefined);
+};
+
+chrome.webRequest.onBeforeSendHeaders.addListener(
+  (details) => {
+    handleAuxiliaryAudienceRequest(details);
+  },
+  {
+    urls: [
+      'https://api.bap.microsoft.com/*',
+      'https://*.crm.dynamics.com/api/*',
+      'https://*.api.crm.dynamics.com/*',
+    ],
+  },
+  ['requestHeaders', 'extraHeaders'],
+);
+
 chrome.runtime.onMessage.addListener((message: RuntimeMessage, sender, sendResponse) => {
   if (message?.type === 'flow-snapshot') {
     postSnapshotToBridge(message.payload)
