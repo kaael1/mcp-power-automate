@@ -278,7 +278,7 @@ export const dataverseUniqueNameSchema = z
 export const dataverseSchemaNameSchema = z
   .string()
   .trim()
-  .regex(/^[a-z]+_[A-Za-z][A-Za-z0-9_]*$/, 'must include a publisher prefix like "adres_..."');
+  .regex(/^[a-z][a-z0-9]*_[A-Za-z][A-Za-z0-9_]*$/, 'must include a publisher prefix like "adres_..." (Microsoft default publishers also use digits, e.g. "cr7f66c_...")');
 
 export const envVarTypeSchema = z.enum(['string', 'number', 'boolean', 'json', 'secret']);
 
