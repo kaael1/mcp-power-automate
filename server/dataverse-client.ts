@@ -264,8 +264,11 @@ const fetchInstanceMetadata = async (envId: string): Promise<{
 
   const bap = pickBapToken();
   if (bap) {
+    // The /scopes/admin/ prefix requires Power Platform tenant admin role.
+    // The plain /environments/{envId} path is accessible to any authenticated
+    // member of the env and returns the same linkedEnvironmentMetadata payload.
     const url = new URL(
-      `https://api.bap.microsoft.com/providers/Microsoft.BusinessAppPlatform/scopes/admin/environments/${encodeURIComponent(envId)}`,
+      `https://api.bap.microsoft.com/providers/Microsoft.BusinessAppPlatform/environments/${encodeURIComponent(envId)}`,
     );
     url.searchParams.set('api-version', '2020-10-01');
     url.searchParams.set('$expand', 'properties.linkedEnvironmentMetadata');
