@@ -54,7 +54,7 @@ const isUnexpired = (candidate: TokenCandidate): boolean => {
 
 const isLegacyTokenJwt = (token: string): boolean => /^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/.test(token);
 
-const decodeJwtAud = (token: string): string | null => {
+const decodeJwtClaims = (token: string): { aud?: string; exp?: number } | null => {
   try {
     const raw = token.replace(/^Bearer\s+/i, '');
     const [, payload] = raw.split('.');
@@ -62,8 +62,7 @@ const decodeJwtAud = (token: string): string | null => {
     const normalized = payload.replace(/-/g, '+').replace(/_/g, '/');
     const padded = normalized.padEnd(normalized.length + ((4 - (normalized.length % 4)) % 4), '=');
     const json = Buffer.from(padded, 'base64').toString('utf8');
-    const obj = JSON.parse(json) as { aud?: string };
-    return typeof obj.aud === 'string' ? obj.aud : null;
+    return JSON.parse(json) as { aud?: string; exp?: number };
   } catch {
     return null;
   }
@@ -74,10 +73,12 @@ const sessionLegacyTokenAsCandidate = (): TokenCandidate | null => {
   if (!session?.legacyToken) return null;
   const rawToken = session.legacyToken.replace(/^Bearer\s+/i, '');
   if (!isLegacyTokenJwt(rawToken)) return null;
-  const aud = decodeJwtAud(rawToken);
-  if (!aud) return null;
+  const claims = decodeJwtClaims(rawToken);
+  if (!claims?.aud) return null;
+  if (typeof claims.exp === 'number' && claims.exp * 1000 <= Date.now()) return null;
   return {
-    aud,
+    aud: claims.aud,
+    exp: claims.exp ?? null,
     source: 'session-legacy-token',
     token: rawToken,
   };
@@ -107,10 +108,12 @@ const sessionApiTokenAsCandidate = (): TokenCandidate | null => {
   if (!session?.apiToken) return null;
   const rawToken = session.apiToken.replace(/^Bearer\s+/i, '');
   if (!isLegacyTokenJwt(rawToken)) return null;
-  const aud = decodeJwtAud(rawToken);
-  if (!aud) return null;
+  const claims = decodeJwtClaims(rawToken);
+  if (!claims?.aud) return null;
+  if (typeof claims.exp === 'number' && claims.exp * 1000 <= Date.now()) return null;
   return {
-    aud,
+    aud: claims.aud,
+    exp: claims.exp ?? null,
     source: 'session-api-token',
     token: rawToken,
   };
@@ -253,11 +256,10 @@ const fetchInstanceMetadata = async (envId: string): Promise<{
           uniqueName: linked.uniqueName,
         };
       }
-    } else if (response.status !== 401 && response.status !== 403) {
-      // Non-auth failure (e.g. environment lacks Dataverse) — propagate.
-      const parsedBody = await readResponseBody(response);
-      throw toDataverseError(response, parsedBody, 'Power Platform environment metadata');
     }
+    // Fall through to BAP on 401/403 (token rejected) or 404 (route not exposed
+    // for our token's scope). api.powerplatform.com gateway routes vary by
+    // tenant and audience.
   }
 
   const bap = pickBapToken();
