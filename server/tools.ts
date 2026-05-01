@@ -34,6 +34,8 @@ import {
   addExistingToSolution,
   createEnvironmentVariable,
   createSolution,
+  listEnvironmentVariables,
+  listSolutionComponents,
   listSolutions,
   setEnvVarValue,
 } from './dataverse-solutions.js';
@@ -46,8 +48,10 @@ import {
   createSolutionInputSchema,
   getRunInputSchema,
   invokeTriggerInputSchema,
+  listEnvironmentVariablesInputSchema,
   listFlowsInputSchema,
   listRunsInputSchema,
+  listSolutionComponentsInputSchema,
   listSolutionsInputSchema,
   optionalTargetInputSchema,
   selectWorkTabInputSchema,
@@ -652,6 +656,38 @@ export const createMcpApp = () => {
     async (input) => {
       try {
         return createTextResult(await addExistingToSolution(input));
+      } catch (error) {
+        return createErrorResult(error);
+      }
+    },
+  );
+
+  server.registerTool(
+    'list_solution_components',
+    {
+      description:
+        'List components inside a solution. Pass enrich: true to also fetch friendly names for workflows and environment-variable definitions (extra round-trip per component type).',
+      inputSchema: listSolutionComponentsInputSchema,
+    },
+    async (input) => {
+      try {
+        return createTextResult(await listSolutionComponents(input));
+      } catch (error) {
+        return createErrorResult(error);
+      }
+    },
+  );
+
+  server.registerTool(
+    'list_environment_variables',
+    {
+      description:
+        'List environment variable definitions and their current values. Scope to a specific solution by passing solutionUniqueName, otherwise lists every env var in the environment.',
+      inputSchema: listEnvironmentVariablesInputSchema,
+    },
+    async (input) => {
+      try {
+        return createTextResult(await listEnvironmentVariables(input || {}));
       } catch (error) {
         return createErrorResult(error);
       }

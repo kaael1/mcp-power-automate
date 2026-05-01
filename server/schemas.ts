@@ -341,6 +341,17 @@ export const addExistingToSolutionInputSchema = z.object({
   doNotIncludeSubcomponents: z.boolean().optional(),
 });
 
+export const listSolutionComponentsInputSchema = z.object({
+  envId: envIdSchema.optional(),
+  solutionUniqueName: dataverseUniqueNameSchema,
+  enrich: z.boolean().optional(),
+});
+
+export const listEnvironmentVariablesInputSchema = z.object({
+  envId: envIdSchema.optional(),
+  solutionUniqueName: dataverseUniqueNameSchema.optional(),
+});
+
 export type FlowId = z.infer<typeof flowIdSchema>;
 export type EnvId = z.infer<typeof envIdSchema>;
 export type SelectionSource = z.infer<typeof selectionSourceSchema>;
@@ -388,3 +399,5 @@ export type CreateSolutionInput = z.infer<typeof createSolutionInputSchema>;
 export type CreateEnvironmentVariableInput = z.infer<typeof createEnvironmentVariableInputSchema>;
 export type SetEnvVarValueInput = z.infer<typeof setEnvVarValueInputSchema>;
 export type AddExistingToSolutionInput = z.infer<typeof addExistingToSolutionInputSchema>;
+export type ListSolutionComponentsInput = z.infer<typeof listSolutionComponentsInputSchema>;
+export type ListEnvironmentVariablesInput = z.infer<typeof listEnvironmentVariablesInputSchema>;

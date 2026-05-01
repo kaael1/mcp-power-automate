@@ -11,6 +11,8 @@ import type {
   CreateEnvironmentVariableInput,
   CreateSolutionInput,
   EnvVarType,
+  ListEnvironmentVariablesInput,
+  ListSolutionComponentsInput,
   ListSolutionsInput,
   SetEnvVarValueInput,
 } from './schemas.js';
@@ -402,6 +404,159 @@ export const setEnvVarValue = async ({ envId, schemaName, value, solutionUniqueN
     valueId: created.body.environmentvariablevalueid,
     value: created.body.value,
     action: 'created' as const,
+  };
+};
+
+interface SolutionComponentRow {
+  objectid: string;
+  componenttype: number;
+}
+
+interface WorkflowRow {
+  workflowid: string;
+  name: string;
+  category?: number;
+  type?: number;
+  statecode?: number;
+}
+
+const enrichComponents = async (
+  instance: DataverseInstance,
+  components: SolutionComponentRow[],
+): Promise<Array<Record<string, unknown>>> => {
+  // Group by component type so we can batch-fetch friendly metadata.
+  const byType = new Map<number, string[]>();
+  for (const c of components) {
+    if (!byType.has(c.componenttype)) byType.set(c.componenttype, []);
+    byType.get(c.componenttype)!.push(c.objectid);
+  }
+
+  const enriched = new Map<string, Record<string, unknown>>();
+
+  if (byType.has(29)) {
+    const ids = byType.get(29)!;
+    const result = await requestDataverse<{ value: WorkflowRow[] }>({
+      instance,
+      method: 'GET',
+      path: 'workflows',
+      query: {
+        $filter: `Microsoft.Dynamics.CRM.In(PropertyName='workflowid',PropertyValues=[${ids.map((id) => `'${id}'`).join(',')}])`,
+        $select: 'workflowid,name,category,type,statecode',
+      },
+    });
+    for (const w of result.body?.value ?? []) {
+      enriched.set(w.workflowid, { name: w.name, category: w.category, type: w.type, state: w.statecode });
+    }
+  }
+
+  if (byType.has(380)) {
+    const ids = byType.get(380)!;
+    const result = await requestDataverse<{
+      value: Array<{ environmentvariabledefinitionid: string; schemaname: string; displayname?: string; type?: number }>;
+    }>({
+      instance,
+      method: 'GET',
+      path: 'environmentvariabledefinitions',
+      query: {
+        $filter: `Microsoft.Dynamics.CRM.In(PropertyName='environmentvariabledefinitionid',PropertyValues=[${ids.map((id) => `'${id}'`).join(',')}])`,
+        $select: 'environmentvariabledefinitionid,schemaname,displayname,type',
+      },
+    });
+    for (const r of result.body?.value ?? []) {
+      enriched.set(r.environmentvariabledefinitionid, {
+        schemaName: r.schemaname,
+        displayName: r.displayname,
+        type: r.type !== undefined ? ENV_VAR_TYPE_LABELS[r.type] ?? `unknown:${r.type}` : null,
+      });
+    }
+  }
+
+  return components.map((c) => ({
+    objectId: c.objectid,
+    componentType: c.componenttype,
+    componentTypeName: COMPONENT_TYPE_NAMES[c.componenttype] ?? null,
+    ...(enriched.get(c.objectid) || {}),
+  }));
+};
+
+export const listSolutionComponents = async ({ envId, solutionUniqueName, enrich }: ListSolutionComponentsInput) => {
+  const instance = await getInstance(envId);
+  const solutionId = await findSolutionId(instance, solutionUniqueName);
+  const result = await requestDataverse<{ value: SolutionComponentRow[] }>({
+    instance,
+    method: 'GET',
+    path: 'solutioncomponents',
+    query: {
+      $filter: `_solutionid_value eq ${solutionId}`,
+      $select: 'objectid,componenttype',
+    },
+  });
+  const components = result.body?.value ?? [];
+  if (!enrich) {
+    return {
+      envId: instance.envId,
+      solutionUniqueName,
+      components: components.map((c) => ({
+        objectId: c.objectid,
+        componentType: c.componenttype,
+        componentTypeName: COMPONENT_TYPE_NAMES[c.componenttype] ?? null,
+      })),
+    };
+  }
+  return {
+    envId: instance.envId,
+    solutionUniqueName,
+    components: await enrichComponents(instance, components),
+  };
+};
+
+export const listEnvironmentVariables = async ({ envId, solutionUniqueName }: ListEnvironmentVariablesInput) => {
+  const instance = await getInstance(envId);
+  if (solutionUniqueName) {
+    const solutionId = await findSolutionId(instance, solutionUniqueName);
+    const componentsResult = await requestDataverse<{ value: SolutionComponentRow[] }>({
+      instance,
+      method: 'GET',
+      path: 'solutioncomponents',
+      query: {
+        $filter: `_solutionid_value eq ${solutionId} and componenttype eq 380`,
+        $select: 'objectid',
+      },
+    });
+    const defIds = (componentsResult.body?.value ?? []).map((c) => c.objectid);
+    if (defIds.length === 0) {
+      return { envId: instance.envId, solutionUniqueName, variables: [] };
+    }
+    const filter = `Microsoft.Dynamics.CRM.In(PropertyName='environmentvariabledefinitionid',PropertyValues=[${defIds.map((id) => `'${id}'`).join(',')}])`;
+    const defsResult = await requestDataverse<{ value: EnvVarDefinitionRow[] }>({
+      instance,
+      method: 'GET',
+      path: 'environmentvariabledefinitions',
+      query: {
+        $filter: filter,
+        $select: 'environmentvariabledefinitionid,schemaname,displayname,type,defaultvalue,description,isrequired',
+        $expand: 'environmentvariabledefinition_environmentvariablevalue($select=environmentvariablevalueid,value)',
+      },
+    });
+    return {
+      envId: instance.envId,
+      solutionUniqueName,
+      variables: (defsResult.body?.value ?? []).map(summarizeEnvVar),
+    };
+  }
+  const allDefs = await requestDataverse<{ value: EnvVarDefinitionRow[] }>({
+    instance,
+    method: 'GET',
+    path: 'environmentvariabledefinitions',
+    query: {
+      $select: 'environmentvariabledefinitionid,schemaname,displayname,type,defaultvalue,description,isrequired',
+      $expand: 'environmentvariabledefinition_environmentvariablevalue($select=environmentvariablevalueid,value)',
+    },
+  });
+  return {
+    envId: instance.envId,
+    solutionUniqueName: null,
+    variables: (allDefs.body?.value ?? []).map(summarizeEnvVar),
   };
 };
 
