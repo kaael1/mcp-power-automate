@@ -251,6 +251,30 @@ The popup and side panel help you:
 - `get_trigger_callback_url`
 - `invoke_trigger`
 
+### Solutions and environment variables (fork additions in 0.5.x)
+
+Manage Power Platform solutions and Solution Environment Variables without
+falling back to Playwright UI automation. All tools talk to the Microsoft
+Dataverse Web API at `{instanceApiUrl}/api/data/v9.2/`. The instance URL is
+resolved on first use via `api.bap.microsoft.com` (BAP) and cached in
+`data/dataverse-org-map.json`. Token capture is automatic — visit any
+`make.powerapps.com/<env>/...` URL once and any `*.dynamics.com` page once,
+and the extension's webRequest listener picks up the BAP and Dataverse
+audience tokens via `/token-audit`. Use `get_health` to check
+`canManageSolutions`.
+
+- `list_solutions` — lists unmanaged + visible solutions in the env.
+- `create_solution` — creates a new unmanaged solution under an existing publisher.
+- `list_solution_components` — lists the component graph; `enrich: true` resolves friendly names for workflows and env-var-defs.
+- `add_existing_to_solution` — adds an existing flow / env-var-def / connection-reference / publisher to a solution. Component-type accepts a string alias or a numeric Dataverse ID.
+- `list_environment_variables` — returns env-var definitions with their current values (or null where no value row exists).
+- `create_environment_variable` — creates an env-var definition (and optionally an initial value) atomically inside the named solution. Use the publisher's customization prefix in `schemaName` (e.g. `cr7f66c_FdHostADREC`).
+- `set_env_var_value` — upserts the value of an existing env-var. PATCHes when a value row exists, POSTs a new value when none does (in which case `solutionUniqueName` is required).
+- `remove_from_solution` — removes a component from a solution. The component itself remains in the environment.
+- `delete_solution` — deletes a solution by uniqueName. Without `force: true`, refuses if the solution still has components.
+- `delete_environment_variable` — two-step deletes value rows then the definition (no orphans).
+- `publish_customizations` — `PublishAllXml` by default; passes `parameterXml` through to `PublishXml` for scoped publishes.
+
 Recommended v1 workflow:
 
 - `get_context`

@@ -197,6 +197,65 @@ Steps:
 - `invoke_trigger`
   Triggers a manual/request flow with a test payload.
 
+### Solutions and environment variables (Mgabr fork ≥ 0.5.x)
+
+Manage Power Platform solutions and Solution Environment Variables via the
+Microsoft Dataverse Web API. Tokens are captured automatically from the
+extension's webRequest listener — visit `make.powerapps.com/<env>/solutions`
+once and any `*.dynamics.com` page once, then `get_health` should report
+`canManageSolutions.available = true`.
+
+- `list_solutions`
+  Lists unmanaged + visible solutions in the env. Pass `includeManaged: true`
+  to see managed solutions, or `query` to substring-match friendly names.
+
+- `create_solution`
+  Creates a new unmanaged solution under an existing publisher. `uniqueName`
+  must match `^[A-Za-z][A-Za-z0-9_]*$`.
+
+- `list_solution_components`
+  Lists the component graph of a solution. Pass `enrich: true` to also
+  resolve friendly names for workflows (cloud flows) and env-var-defs.
+
+- `add_existing_to_solution`
+  Adds an existing component to a solution (`workflow`,
+  `environmentVariableDefinition`, `environmentVariableValue`,
+  `connectionReference`, `publisher`, `solution`, or a numeric Dataverse
+  component-type ID).
+
+- `list_environment_variables`
+  Returns env-var definitions with their current values (or null where no
+  value row exists). Pass `solutionUniqueName` to scope to a solution.
+
+- `create_environment_variable`
+  Creates an env-var definition atomically inside the named solution via
+  the `MSCRM.SolutionUniqueName` header. `schemaName` must include the
+  publisher's customization prefix (e.g. `cr7f66c_FdHostADREC`). When
+  `initialValue` is supplied, also creates the value row in the same
+  solution.
+
+- `set_env_var_value`
+  Upserts the value of an existing env-var. PATCHes when a value row
+  exists; POSTs a new value row when none does (in which case
+  `solutionUniqueName` is required).
+
+- `remove_from_solution`
+  Removes a component from a solution. The component itself remains in
+  the environment.
+
+- `delete_solution`
+  Deletes a solution by uniqueName. Without `force: true`, refuses if the
+  solution still has any components — remove components first.
+
+- `delete_environment_variable`
+  Two-step delete: removes any value rows first, then the definition.
+  Avoids orphaned values that would confuse later imports.
+
+- `publish_customizations`
+  `PublishAllXml` by default; pass `parameterXml` for scoped publishes via
+  `PublishXml`. Required after env-var schema changes that need to
+  propagate to running flows immediately.
+
 ## Decision guidance
 
 Prefer `invoke_trigger` only when:
