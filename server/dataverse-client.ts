@@ -132,6 +132,11 @@ export const pickPowerPlatformToken = (): TokenCandidate | null => {
   return null;
 };
 
+// Dataverse-audience tokens always live in the token-audit pool — the
+// session.json apiToken/legacyToken have api.flow.microsoft.com or
+// api.powerplatform.com audiences which Dataverse does not accept, so
+// there's no useful fallback path here (unlike pickBapToken /
+// pickPowerPlatformToken which CAN reuse those session-derived tokens).
 export const pickDataverseToken = (instanceUrl: string): TokenCandidate | null => {
   const audit = getTokenAudit();
   if (!audit) return null;

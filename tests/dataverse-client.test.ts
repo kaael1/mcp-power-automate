@@ -364,4 +364,192 @@ describe('dataverse-solutions tools', () => {
       DoNotIncludeSubcomponents: false,
     });
   });
+
+  it('create_environment_variable rolls back the orphaned definition when the value-row POST fails', async () => {
+    await seedSessionsAndTokens();
+    const dvs = await import('../server/dataverse-solutions.js');
+
+    const deleteCalls: string[] = [];
+    const fetchMock = vi.fn(async (input, init) => {
+      const url = new URL(String(input));
+      const method = (init as RequestInit | undefined)?.method;
+      const path = url.pathname;
+      if (path.endsWith('/solutions') && method === 'GET') {
+        return createJsonResponse({ value: [{ solutionid: 'sol-guid' }] });
+      }
+      if (path.endsWith('/environmentvariabledefinitions') && method === 'POST') {
+        return createJsonResponse({ environmentvariabledefinitionid: 'def-guid', schemaname: 'adres_X', type: 100000000 }, 201);
+      }
+      if (path.endsWith('/environmentvariablevalues') && method === 'POST') {
+        return createJsonResponse({ error: { message: 'simulated failure' } }, 500);
+      }
+      if (path.includes('/environmentvariabledefinitions(def-guid)') && method === 'DELETE') {
+        deleteCalls.push(path);
+        return createJsonResponse({}, 200);
+      }
+      throw new Error(`Unexpected fetch ${method} ${url.toString()}`);
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(
+      dvs.createEnvironmentVariable({
+        solutionUniqueName: 'TestSolution',
+        schemaName: 'adres_X',
+        displayName: 'X',
+        type: 'string',
+        initialValue: 'will-fail',
+      }),
+    ).rejects.toMatchObject({ code: 'INVALID_REQUEST' });
+    // Rollback DELETE on the definition was attempted
+    expect(deleteCalls).toHaveLength(1);
+    expect(deleteCalls[0]).toContain('/environmentvariabledefinitions(def-guid)');
+  });
+});
+
+describe('Phase 4 lifecycle tools', () => {
+  it('delete_solution refuses non-empty solutions when force is omitted', async () => {
+    await seedSessionsAndTokens();
+    const dvs = await import('../server/dataverse-solutions.js');
+
+    const fetchMock = vi.fn(async (input, init) => {
+      const url = new URL(String(input));
+      const method = (init as RequestInit | undefined)?.method;
+      const path = url.pathname;
+      if (path.endsWith('/solutions') && method === 'GET') {
+        return createJsonResponse({ value: [{ solutionid: 'sol-guid' }] });
+      }
+      if (path.endsWith('/solutioncomponents') && method === 'GET') {
+        return createJsonResponse({ value: [{ objectid: 'comp-1' }] });
+      }
+      throw new Error(`Unexpected fetch ${method} ${url.toString()}`);
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(dvs.deleteSolution({ uniqueName: 'TestSolution' })).rejects.toMatchObject({
+      code: 'INVALID_REQUEST',
+    });
+    // No DELETE was issued
+    expect(fetchMock.mock.calls.find((c) => (c[1] as RequestInit | undefined)?.method === 'DELETE')).toBeUndefined();
+  });
+
+  it('delete_solution skips the safety check when force is true', async () => {
+    await seedSessionsAndTokens();
+    const dvs = await import('../server/dataverse-solutions.js');
+
+    const componentsCalls: number[] = [];
+    const fetchMock = vi.fn(async (input, init) => {
+      const url = new URL(String(input));
+      const method = (init as RequestInit | undefined)?.method;
+      const path = url.pathname;
+      if (path.endsWith('/solutions') && method === 'GET') {
+        return createJsonResponse({ value: [{ solutionid: 'sol-guid' }] });
+      }
+      if (path.endsWith('/solutioncomponents') && method === 'GET') {
+        componentsCalls.push(1);
+        return createJsonResponse({ value: [{ objectid: 'comp-1' }] });
+      }
+      if (path.includes('/solutions(sol-guid)') && method === 'DELETE') {
+        return createJsonResponse({}, 200);
+      }
+      throw new Error(`Unexpected fetch ${method} ${url.toString()}`);
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const result = await dvs.deleteSolution({ uniqueName: 'TestSolution', force: true });
+    expect(result.ok).toBe(true);
+    expect(result.solutionId).toBe('sol-guid');
+    // Safety GET on solutioncomponents should have been skipped
+    expect(componentsCalls).toHaveLength(0);
+  });
+
+  it('delete_environment_variable deletes value rows before the definition', async () => {
+    await seedSessionsAndTokens();
+    const dvs = await import('../server/dataverse-solutions.js');
+
+    const orderedDeletes: string[] = [];
+    const fetchMock = vi.fn(async (input, init) => {
+      const url = new URL(String(input));
+      const method = (init as RequestInit | undefined)?.method;
+      const path = url.pathname;
+      if (path.endsWith('/environmentvariabledefinitions') && method === 'GET') {
+        return createJsonResponse({
+          value: [
+            {
+              environmentvariabledefinitionid: 'def-guid',
+              schemaname: 'adres_X',
+              type: 100000000,
+              environmentvariabledefinition_environmentvariablevalue: [
+                { environmentvariablevalueid: 'val-1', value: 'a' },
+                { environmentvariablevalueid: 'val-2', value: 'b' },
+              ],
+            },
+          ],
+        });
+      }
+      if (method === 'DELETE') {
+        orderedDeletes.push(path);
+        return createJsonResponse({}, 200);
+      }
+      throw new Error(`Unexpected fetch ${method} ${url.toString()}`);
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const result = await dvs.deleteEnvironmentVariable({ schemaName: 'adres_X' });
+    expect(result.deletedValueRows).toBe(2);
+    expect(result.ok).toBe(true);
+    // Two value-row deletes BEFORE the definition delete
+    expect(orderedDeletes).toHaveLength(3);
+    expect(orderedDeletes[0]).toContain('environmentvariablevalues(val-1)');
+    expect(orderedDeletes[1]).toContain('environmentvariablevalues(val-2)');
+    expect(orderedDeletes[2]).toContain('environmentvariabledefinitions(def-guid)');
+  });
+
+  it('publish_customizations posts to PublishAllXml by default', async () => {
+    await seedSessionsAndTokens();
+    const dvs = await import('../server/dataverse-solutions.js');
+    const fetchMock = vi.fn(async () => createJsonResponse({}));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const result = await dvs.publishCustomizations({});
+    expect(result.scope).toBe('all');
+    const [calledUrl, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
+    expect(calledUrl).toContain('/PublishAllXml');
+    expect(init.method).toBe('POST');
+    expect(init.body).toBeUndefined();
+  });
+
+  it('publish_customizations posts to PublishXml with ParameterXml when scoped', async () => {
+    await seedSessionsAndTokens();
+    const dvs = await import('../server/dataverse-solutions.js');
+    const fetchMock = vi.fn(async () => createJsonResponse({}));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const xml = '<importexportxml><entities><entity>account</entity></entities></importexportxml>';
+    const result = await dvs.publishCustomizations({ parameterXml: xml });
+    expect(result.scope).toBe('scoped');
+    const [calledUrl, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
+    expect(calledUrl).toContain('/PublishXml');
+    expect(JSON.parse(init.body as string)).toEqual({ ParameterXml: xml });
+  });
+
+  it('remove_from_solution posts RemoveSolutionComponent with the resolved type id', async () => {
+    await seedSessionsAndTokens();
+    const dvs = await import('../server/dataverse-solutions.js');
+    const fetchMock = vi.fn(async () => createJsonResponse({}));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await dvs.removeFromSolution({
+      solutionUniqueName: 'TestSolution',
+      componentId: '0ea141eb-1e63-7aaa-2aec-32e6c6987016',
+      componentType: 'environmentVariableDefinition',
+    });
+
+    const [calledUrl, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
+    expect(calledUrl).toContain('/RemoveSolutionComponent');
+    expect(JSON.parse(init.body as string)).toEqual({
+      ComponentId: '0ea141eb-1e63-7aaa-2aec-32e6c6987016',
+      ComponentType: 380,
+      SolutionUniqueName: 'TestSolution',
+    });
+  });
 });

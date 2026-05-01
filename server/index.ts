@@ -279,21 +279,35 @@ export const createBridgeServer = () =>
         // Merge with existing audit so single-candidate POSTs from auxiliary
         // sources (BAP / Dataverse webRequest captures) accumulate alongside
         // full storage scans rather than overwriting them. Keep newest 50.
+        // Audit-level metadata (envId, flowId, portalUrl) is preserved from
+        // the existing audit when the incoming POST lacks it; auxiliary
+        // events frequently leave envId/flowId blank because they fire on
+        // origins outside the Power Automate maker portal.
+        // Expired candidates are also evicted at insert time so the 50-slot
+        // cap doesn't fill with stale tokens.
+        const nowSeconds = Math.floor(Date.now() / 1000);
+        const isLive = (candidate: typeof audit.candidates[number]) =>
+          typeof candidate.exp !== 'number' || candidate.exp > nowSeconds;
         const existing = getTokenAudit();
         const seen = new Set<string>();
         const merged: typeof audit.candidates = [];
         for (const candidate of audit.candidates) {
           if (seen.has(candidate.token)) continue;
+          if (!isLive(candidate)) continue;
           seen.add(candidate.token);
           merged.push(candidate);
         }
         for (const candidate of existing?.candidates ?? []) {
           if (seen.has(candidate.token)) continue;
+          if (!isLive(candidate)) continue;
           seen.add(candidate.token);
           merged.push(candidate);
         }
         const savedAudit = await saveTokenAudit({
           ...audit,
+          envId: audit.envId ?? existing?.envId,
+          flowId: audit.flowId ?? existing?.flowId,
+          portalUrl: audit.portalUrl ?? existing?.portalUrl,
           candidates: merged.slice(0, 50),
         });
         sendJson(response, 200, {

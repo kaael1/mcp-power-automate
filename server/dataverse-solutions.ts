@@ -318,23 +318,45 @@ export const createEnvironmentVariable = async ({
     };
   }
 
-  // Create the value row, also inside the same solution.
-  const valueRow = await requestDataverse<{
-    environmentvariablevalueid: string;
-    value: string;
-  }>({
-    instance,
-    method: 'POST',
-    path: 'environmentvariablevalues',
-    headers: {
-      'MSCRM.SolutionUniqueName': solutionUniqueName,
-    },
-    body: {
-      schemaname: `${schemaName}_value`,
-      value: initialValue,
-      'EnvironmentVariableDefinitionId@odata.bind': `/environmentvariabledefinitions(${created.body.environmentvariabledefinitionid})`,
-    },
-  });
+  // Create the value row, also inside the same solution. If this fails after
+  // the definition was committed, best-effort delete the orphan definition
+  // and rethrow with rollback context, so the caller can retry cleanly.
+  let valueRow;
+  try {
+    valueRow = await requestDataverse<{
+      environmentvariablevalueid: string;
+      value: string;
+    }>({
+      instance,
+      method: 'POST',
+      path: 'environmentvariablevalues',
+      headers: {
+        'MSCRM.SolutionUniqueName': solutionUniqueName,
+      },
+      body: {
+        schemaname: `${schemaName}_value`,
+        value: initialValue,
+        'EnvironmentVariableDefinitionId@odata.bind': `/environmentvariabledefinitions(${created.body.environmentvariabledefinitionid})`,
+      },
+    });
+  } catch (valueError) {
+    let rollbackNote = 'definition rolled back.';
+    try {
+      await requestDataverse<AnyRecord>({
+        instance,
+        method: 'DELETE',
+        path: `environmentvariabledefinitions(${created.body.environmentvariabledefinitionid})`,
+      });
+    } catch (rollbackError) {
+      rollbackNote = `definition rollback FAILED: ${rollbackError instanceof Error ? rollbackError.message : String(rollbackError)} — definition ${created.body.environmentvariabledefinitionid} ("${schemaName}") is still in solution ${solutionUniqueName} and must be cleaned up manually.`;
+    }
+    throw new PowerAutomateError({
+      code: 'INVALID_REQUEST',
+      message: `Value-row creation failed for environment variable "${schemaName}"; ${rollbackNote} Underlying error: ${valueError instanceof Error ? valueError.message : String(valueError)}`,
+      retryable: false,
+      details: valueError,
+    });
+  }
 
   return {
     envId: instance.envId,
@@ -384,6 +406,30 @@ export const setEnvVarValue = async ({ envId, schemaName, value, solutionUniqueN
   }
   await findSolutionId(instance, solutionUniqueName);
 
+  // Concurrency narrowing: re-fetch the definition right before the POST so
+  // we catch the case where another writer created the value row between
+  // our initial GET and now. If a value row exists at this point, switch to
+  // a PATCH on it instead of double-creating. Race window is narrowed but
+  // not eliminated; for single-user MCP this is acceptable.
+  const recheck = await findEnvVarDefinition(instance, schemaName);
+  const recheckExisting = recheck?.environmentvariabledefinition_environmentvariablevalue?.[0];
+  if (recheckExisting) {
+    await requestDataverse<AnyRecord>({
+      instance,
+      method: 'PATCH',
+      path: `environmentvariablevalues(${recheckExisting.environmentvariablevalueid})`,
+      body: { value },
+    });
+    return {
+      envId: instance.envId,
+      definitionId: definition.environmentvariabledefinitionid,
+      schemaName,
+      valueId: recheckExisting.environmentvariablevalueid,
+      value,
+      action: 'updated' as const,
+    };
+  }
+
   const created = await requestDataverse<{
     environmentvariablevalueid: string;
     value: string;
@@ -416,6 +462,24 @@ interface SolutionComponentRow {
   componenttype: number;
 }
 
+// Dataverse query URLs cap at ~16KB on some endpoints. Each quoted GUID +
+// comma is 39 chars, so an unbounded `Microsoft.Dynamics.CRM.In(...)` filter
+// breaks at ~410 ids. Chunking keeps each request well under the cap with
+// generous margin for the rest of the URL (instance host, path, $select,
+// $expand, etc).
+const ID_BATCH_SIZE = 200;
+
+const chunkArray = <T>(items: T[], size: number): T[][] => {
+  const chunks: T[][] = [];
+  for (let index = 0; index < items.length; index += size) {
+    chunks.push(items.slice(index, index + size));
+  }
+  return chunks;
+};
+
+const buildInFilter = (propertyName: string, ids: string[]): string =>
+  `Microsoft.Dynamics.CRM.In(PropertyName='${propertyName}',PropertyValues=[${ids.map((id) => `'${id}'`).join(',')}])`;
+
 interface WorkflowRow {
   workflowid: string;
   name: string;
@@ -439,39 +503,43 @@ const enrichComponents = async (
 
   if (byType.has(29)) {
     const ids = byType.get(29)!;
-    const result = await requestDataverse<{ value: WorkflowRow[] }>({
-      instance,
-      method: 'GET',
-      path: 'workflows',
-      query: {
-        $filter: `Microsoft.Dynamics.CRM.In(PropertyName='workflowid',PropertyValues=[${ids.map((id) => `'${id}'`).join(',')}])`,
-        $select: 'workflowid,name,category,type,statecode',
-      },
-    });
-    for (const w of result.body?.value ?? []) {
-      enriched.set(w.workflowid, { name: w.name, category: w.category, type: w.type, state: w.statecode });
+    for (const chunk of chunkArray(ids, ID_BATCH_SIZE)) {
+      const result = await requestDataverse<{ value: WorkflowRow[] }>({
+        instance,
+        method: 'GET',
+        path: 'workflows',
+        query: {
+          $filter: buildInFilter('workflowid', chunk),
+          $select: 'workflowid,name,category,type,statecode',
+        },
+      });
+      for (const w of result.body?.value ?? []) {
+        enriched.set(w.workflowid, { name: w.name, category: w.category, type: w.type, state: w.statecode });
+      }
     }
   }
 
   if (byType.has(380)) {
     const ids = byType.get(380)!;
-    const result = await requestDataverse<{
-      value: Array<{ environmentvariabledefinitionid: string; schemaname: string; displayname?: string; type?: number }>;
-    }>({
-      instance,
-      method: 'GET',
-      path: 'environmentvariabledefinitions',
-      query: {
-        $filter: `Microsoft.Dynamics.CRM.In(PropertyName='environmentvariabledefinitionid',PropertyValues=[${ids.map((id) => `'${id}'`).join(',')}])`,
-        $select: 'environmentvariabledefinitionid,schemaname,displayname,type',
-      },
-    });
-    for (const r of result.body?.value ?? []) {
-      enriched.set(r.environmentvariabledefinitionid, {
-        schemaName: r.schemaname,
-        displayName: r.displayname,
-        type: r.type !== undefined ? ENV_VAR_TYPE_LABELS[r.type] ?? `unknown:${r.type}` : null,
+    for (const chunk of chunkArray(ids, ID_BATCH_SIZE)) {
+      const result = await requestDataverse<{
+        value: Array<{ environmentvariabledefinitionid: string; schemaname: string; displayname?: string; type?: number }>;
+      }>({
+        instance,
+        method: 'GET',
+        path: 'environmentvariabledefinitions',
+        query: {
+          $filter: buildInFilter('environmentvariabledefinitionid', chunk),
+          $select: 'environmentvariabledefinitionid,schemaname,displayname,type',
+        },
       });
+      for (const r of result.body?.value ?? []) {
+        enriched.set(r.environmentvariabledefinitionid, {
+          schemaName: r.schemaname,
+          displayName: r.displayname,
+          type: r.type !== undefined ? ENV_VAR_TYPE_LABELS[r.type] ?? `unknown:${r.type}` : null,
+        });
+      }
     }
   }
 
@@ -531,21 +599,24 @@ export const listEnvironmentVariables = async ({ envId, solutionUniqueName }: Li
     if (defIds.length === 0) {
       return { envId: instance.envId, solutionUniqueName, variables: [] };
     }
-    const filter = `Microsoft.Dynamics.CRM.In(PropertyName='environmentvariabledefinitionid',PropertyValues=[${defIds.map((id) => `'${id}'`).join(',')}])`;
-    const defsResult = await requestDataverse<{ value: EnvVarDefinitionRow[] }>({
-      instance,
-      method: 'GET',
-      path: 'environmentvariabledefinitions',
-      query: {
-        $filter: filter,
-        $select: 'environmentvariabledefinitionid,schemaname,displayname,type,defaultvalue,description,isrequired',
-        $expand: 'environmentvariabledefinition_environmentvariablevalue($select=environmentvariablevalueid,value)',
-      },
-    });
+    const allDefs: EnvVarDefinitionRow[] = [];
+    for (const chunk of chunkArray(defIds, ID_BATCH_SIZE)) {
+      const defsResult = await requestDataverse<{ value: EnvVarDefinitionRow[] }>({
+        instance,
+        method: 'GET',
+        path: 'environmentvariabledefinitions',
+        query: {
+          $filter: buildInFilter('environmentvariabledefinitionid', chunk),
+          $select: 'environmentvariabledefinitionid,schemaname,displayname,type,defaultvalue,description,isrequired',
+          $expand: 'environmentvariabledefinition_environmentvariablevalue($select=environmentvariablevalueid,value)',
+        },
+      });
+      allDefs.push(...(defsResult.body?.value ?? []));
+    }
     return {
       envId: instance.envId,
       solutionUniqueName,
-      variables: (defsResult.body?.value ?? []).map(summarizeEnvVar),
+      variables: allDefs.map(summarizeEnvVar),
     };
   }
   const allDefs = await requestDataverse<{ value: EnvVarDefinitionRow[] }>({

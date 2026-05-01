@@ -658,7 +658,7 @@ export const createMcpApp = () => {
     'add_existing_to_solution',
     {
       description:
-        'Add an existing Dataverse component (cloud flow / env var / connection reference / publisher) to a solution. componentType accepts "workflow" | "environmentVariableDefinition" | "environmentVariableValue" | "connectionReference" | "publisher" | "solution" or a numeric Dataverse component-type ID.',
+        'Add an existing Dataverse component (cloud flow / env var / connection reference / publisher) to a solution. componentType accepts "workflow" | "environmentVariableDefinition" | "environmentVariableValue" | "connectionReference" | "publisher" | "solution" or a numeric Dataverse component-type ID. NOTE: addRequiredComponents defaults to true, which silently pulls the component\'s dependency closure (e.g. connection references for a flow) into the solution. Pass addRequiredComponents: false for a precise add of just the named component.',
       inputSchema: addExistingToSolutionInputSchema,
     },
     async (input) => {
@@ -754,7 +754,7 @@ export const createMcpApp = () => {
     'publish_customizations',
     {
       description:
-        'Publish all unpublished customizations in the environment (PublishAllXml). Pass parameterXml to scope to a specific entity / web-resource set via PublishXml.',
+        'Publish unpublished customizations in the Dataverse environment. WARNING: this is an ENVIRONMENT-WIDE write — PublishAllXml affects every solution in the env, not just the active one. Pass parameterXml to scope to a specific entity / web-resource set via PublishXml. Required after env-var schema or value changes that need to take effect immediately for already-running consumers.',
       inputSchema: publishCustomizationsInputSchema,
     },
     async (input) => {
