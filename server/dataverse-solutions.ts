@@ -360,12 +360,15 @@ export const createEnvironmentVariable = async ({
         code: 'PARTIAL_FAILURE',
         message: `Value-row creation failed for environment variable "${schemaName}"; rollback of the orphan definition ALSO failed (${rollbackMessage}). Definition ${created.body.environmentvariabledefinitionid} is still in solution ${solutionUniqueName} and must be cleaned up manually. Underlying value-row error: ${valueErrorMessage}`,
         retryable: false,
+        // Strings (not raw Error instances) so the diagnostics survive
+        // JSON.stringify when this error is serialized through the bridge —
+        // Error properties are non-enumerable and silently become {}.
         details: {
           orphanDefinitionId: created.body.environmentvariabledefinitionid,
           schemaName,
           solutionUniqueName,
-          valueError,
-          rollbackError,
+          valueErrorMessage,
+          rollbackErrorMessage: rollbackMessage,
         },
       });
     }
@@ -377,7 +380,7 @@ export const createEnvironmentVariable = async ({
       code: 'ROLLED_BACK',
       message: `Value-row creation failed for environment variable "${schemaName}"; the orphan definition was rolled back successfully so retry is safe. Underlying error: ${valueErrorMessage}`,
       retryable: true,
-      details: { schemaName, solutionUniqueName, valueError },
+      details: { schemaName, solutionUniqueName, valueErrorMessage },
     });
   }
 

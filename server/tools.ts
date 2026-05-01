@@ -626,7 +626,7 @@ export const createMcpApp = () => {
     'create_environment_variable',
     {
       description:
-        'Create a Solution Environment Variable definition (and optionally an initial value) inside the named solution. schemaName must include a publisher prefix (e.g. "adres_FdHostADREC"). Type "secret" stores values in Azure Key Vault references rather than plain text.',
+        'Create a Solution Environment Variable definition (and optionally an initial value) inside the named solution. schemaName must include a publisher prefix (e.g. "adres_FdHostADREC"). Type "secret" stores values in Azure Key Vault references rather than plain text. On partial failure during a two-step create (definition + value-row): throws ROLLED_BACK (retryable: true; the orphan definition was rolled back so server state matches pre-call) or PARTIAL_FAILURE (retryable: false; rollback also failed — details.orphanDefinitionId is the id for a targeted cleanup via delete_environment_variable).',
       inputSchema: createEnvironmentVariableInputSchema,
     },
     async (input) => {
