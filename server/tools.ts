@@ -34,9 +34,13 @@ import {
   addExistingToSolution,
   createEnvironmentVariable,
   createSolution,
+  deleteEnvironmentVariable,
+  deleteSolution,
   listEnvironmentVariables,
   listSolutionComponents,
   listSolutions,
+  publishCustomizations,
+  removeFromSolution,
   setEnvVarValue,
 } from './dataverse-solutions.js';
 import { toErrorPayload } from './errors.js';
@@ -46,6 +50,8 @@ import {
   createEnvironmentVariableInputSchema,
   createFlowInputSchema,
   createSolutionInputSchema,
+  deleteEnvironmentVariableInputSchema,
+  deleteSolutionInputSchema,
   getRunInputSchema,
   invokeTriggerInputSchema,
   listEnvironmentVariablesInputSchema,
@@ -54,6 +60,8 @@ import {
   listSolutionComponentsInputSchema,
   listSolutionsInputSchema,
   optionalTargetInputSchema,
+  publishCustomizationsInputSchema,
+  removeFromSolutionInputSchema,
   selectWorkTabInputSchema,
   setActiveFlowInputSchema,
   setEnvVarValueInputSchema,
@@ -688,6 +696,70 @@ export const createMcpApp = () => {
     async (input) => {
       try {
         return createTextResult(await listEnvironmentVariables(input || {}));
+      } catch (error) {
+        return createErrorResult(error);
+      }
+    },
+  );
+
+  server.registerTool(
+    'remove_from_solution',
+    {
+      description:
+        'Remove a component from a solution via the Dataverse RemoveSolutionComponent action. Component is not deleted from the environment, only removed from the named solution.',
+      inputSchema: removeFromSolutionInputSchema,
+    },
+    async (input) => {
+      try {
+        return createTextResult(await removeFromSolution(input));
+      } catch (error) {
+        return createErrorResult(error);
+      }
+    },
+  );
+
+  server.registerTool(
+    'delete_solution',
+    {
+      description:
+        'Delete a Power Platform solution by uniqueName. Without force: refuses if the solution still contains any components (so you delete components first). force: true skips the safety check. The Dataverse rows are removed; flows still bound to the solution become unsolutioned (their definitions are not deleted).',
+      inputSchema: deleteSolutionInputSchema,
+    },
+    async (input) => {
+      try {
+        return createTextResult(await deleteSolution(input));
+      } catch (error) {
+        return createErrorResult(error);
+      }
+    },
+  );
+
+  server.registerTool(
+    'delete_environment_variable',
+    {
+      description:
+        'Delete a Solution Environment Variable definition and any associated value rows. Two-step delete (value rows first, then definition) avoids orphaned values that would otherwise persist invisibly in Dataverse.',
+      inputSchema: deleteEnvironmentVariableInputSchema,
+    },
+    async (input) => {
+      try {
+        return createTextResult(await deleteEnvironmentVariable(input));
+      } catch (error) {
+        return createErrorResult(error);
+      }
+    },
+  );
+
+  server.registerTool(
+    'publish_customizations',
+    {
+      description:
+        'Publish all unpublished customizations in the environment (PublishAllXml). Pass parameterXml to scope to a specific entity / web-resource set via PublishXml.',
+      inputSchema: publishCustomizationsInputSchema,
+    },
+    async (input) => {
+      try {
+        return createTextResult(await publishCustomizations(input || {}));
       } catch (error) {
         return createErrorResult(error);
       }

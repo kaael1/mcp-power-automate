@@ -10,10 +10,14 @@ import type {
   ComponentType,
   CreateEnvironmentVariableInput,
   CreateSolutionInput,
+  DeleteEnvironmentVariableInput,
+  DeleteSolutionInput,
   EnvVarType,
   ListEnvironmentVariablesInput,
   ListSolutionComponentsInput,
   ListSolutionsInput,
+  PublishCustomizationsInput,
+  RemoveFromSolutionInput,
   SetEnvVarValueInput,
 } from './schemas.js';
 
@@ -593,4 +597,117 @@ export const addExistingToSolution = async ({
     addRequiredComponents: addRequiredComponents ?? true,
     ok: true,
   };
+};
+
+export const removeFromSolution = async ({
+  envId,
+  solutionUniqueName,
+  componentId,
+  componentType,
+}: RemoveFromSolutionInput) => {
+  const instance = await getInstance(envId);
+  const numericType = resolveComponentType(componentType);
+  await requestDataverse<AnyRecord>({
+    instance,
+    method: 'POST',
+    path: 'RemoveSolutionComponent',
+    body: {
+      ComponentId: componentId,
+      ComponentType: numericType,
+      SolutionUniqueName: solutionUniqueName,
+    },
+  });
+  return {
+    envId: instance.envId,
+    solutionUniqueName,
+    componentId,
+    componentType: numericType,
+    componentTypeName: COMPONENT_TYPE_NAMES[numericType] ?? null,
+    ok: true,
+  };
+};
+
+export const deleteSolution = async ({ envId, uniqueName, force }: DeleteSolutionInput) => {
+  const instance = await getInstance(envId);
+  const solutionId = await findSolutionId(instance, uniqueName);
+
+  if (!force) {
+    const result = await requestDataverse<{ value: SolutionComponentRow[] }>({
+      instance,
+      method: 'GET',
+      path: 'solutioncomponents',
+      query: {
+        $filter: `_solutionid_value eq ${solutionId}`,
+        $select: 'objectid',
+        $top: 1,
+      },
+    });
+    const count = result.body?.value?.length ?? 0;
+    if (count > 0) {
+      throw new PowerAutomateError({
+        code: 'INVALID_REQUEST',
+        message:
+          `Solution "${uniqueName}" still contains components. Pass force: true to delete anyway, or remove components first.`,
+        retryable: false,
+      });
+    }
+  }
+
+  await requestDataverse<AnyRecord>({
+    instance,
+    method: 'DELETE',
+    path: `solutions(${solutionId})`,
+  });
+  return { envId: instance.envId, uniqueName, solutionId, ok: true };
+};
+
+export const deleteEnvironmentVariable = async ({ envId, schemaName }: DeleteEnvironmentVariableInput) => {
+  const instance = await getInstance(envId);
+  const definition = await findEnvVarDefinition(instance, schemaName);
+  if (!definition) {
+    throw new PowerAutomateError({
+      code: 'ENV_VAR_NOT_FOUND',
+      message: `Environment variable "${schemaName}" not found.`,
+      retryable: false,
+    });
+  }
+  // Delete value rows first to avoid orphans.
+  for (const v of definition.environmentvariabledefinition_environmentvariablevalue ?? []) {
+    await requestDataverse<AnyRecord>({
+      instance,
+      method: 'DELETE',
+      path: `environmentvariablevalues(${v.environmentvariablevalueid})`,
+    });
+  }
+  await requestDataverse<AnyRecord>({
+    instance,
+    method: 'DELETE',
+    path: `environmentvariabledefinitions(${definition.environmentvariabledefinitionid})`,
+  });
+  return {
+    envId: instance.envId,
+    schemaName,
+    definitionId: definition.environmentvariabledefinitionid,
+    deletedValueRows: (definition.environmentvariabledefinition_environmentvariablevalue ?? []).length,
+    ok: true,
+  };
+};
+
+export const publishCustomizations = async ({ envId, parameterXml }: PublishCustomizationsInput) => {
+  const instance = await getInstance(envId);
+  if (parameterXml) {
+    await requestDataverse<AnyRecord>({
+      instance,
+      method: 'POST',
+      path: 'PublishXml',
+      body: { ParameterXml: parameterXml },
+    });
+    return { envId: instance.envId, scope: 'scoped' as const, ok: true };
+  }
+  await requestDataverse<AnyRecord>({
+    instance,
+    method: 'POST',
+    path: 'PublishAllXml',
+  });
+  return { envId: instance.envId, scope: 'all' as const, ok: true };
 };

@@ -352,6 +352,29 @@ export const listEnvironmentVariablesInputSchema = z.object({
   solutionUniqueName: dataverseUniqueNameSchema.optional(),
 });
 
+export const deleteSolutionInputSchema = z.object({
+  envId: envIdSchema.optional(),
+  uniqueName: dataverseUniqueNameSchema,
+  force: z.boolean().optional(),
+});
+
+export const deleteEnvironmentVariableInputSchema = z.object({
+  envId: envIdSchema.optional(),
+  schemaName: dataverseSchemaNameSchema,
+});
+
+export const removeFromSolutionInputSchema = z.object({
+  envId: envIdSchema.optional(),
+  solutionUniqueName: dataverseUniqueNameSchema,
+  componentId: guidSchema,
+  componentType: componentTypeSchema,
+});
+
+export const publishCustomizationsInputSchema = z.object({
+  envId: envIdSchema.optional(),
+  parameterXml: z.string().trim().min(1).optional(),
+});
+
 export type FlowId = z.infer<typeof flowIdSchema>;
 export type EnvId = z.infer<typeof envIdSchema>;
 export type SelectionSource = z.infer<typeof selectionSourceSchema>;
@@ -401,3 +424,7 @@ export type SetEnvVarValueInput = z.infer<typeof setEnvVarValueInputSchema>;
 export type AddExistingToSolutionInput = z.infer<typeof addExistingToSolutionInputSchema>;
 export type ListSolutionComponentsInput = z.infer<typeof listSolutionComponentsInputSchema>;
 export type ListEnvironmentVariablesInput = z.infer<typeof listEnvironmentVariablesInputSchema>;
+export type DeleteSolutionInput = z.infer<typeof deleteSolutionInputSchema>;
+export type DeleteEnvironmentVariableInput = z.infer<typeof deleteEnvironmentVariableInputSchema>;
+export type RemoveFromSolutionInput = z.infer<typeof removeFromSolutionInputSchema>;
+export type PublishCustomizationsInput = z.infer<typeof publishCustomizationsInputSchema>;
