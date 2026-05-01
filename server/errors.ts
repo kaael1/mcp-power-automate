@@ -16,6 +16,15 @@ export type PowerAutomateErrorCode =
   | 'SOLUTION_NOT_FOUND'
   | 'ENV_VAR_NOT_FOUND'
   | 'INVALID_UNIQUE_NAME'
+  // Rollback succeeded after a multi-step operation failed mid-way: the
+  // server-visible state is back to where it was before the operation, so
+  // the caller can retry with the same input safely.
+  | 'ROLLED_BACK'
+  // A multi-step operation failed mid-way AND the rollback also failed,
+  // so the server-visible state is inconsistent and requires manual
+  // cleanup. The error's `details` carries enough info for a targeted
+  // cleanup call (e.g. `details.orphanDefinitionId`).
+  | 'PARTIAL_FAILURE'
   | 'UNKNOWN';
 
 export interface PowerAutomateErrorPayload {

@@ -340,21 +340,44 @@ export const createEnvironmentVariable = async ({
       },
     });
   } catch (valueError) {
-    let rollbackNote = 'definition rolled back.';
+    const valueErrorMessage = valueError instanceof Error ? valueError.message : String(valueError);
+    let rollbackError: unknown = null;
     try {
       await requestDataverse<AnyRecord>({
         instance,
         method: 'DELETE',
         path: `environmentvariabledefinitions(${created.body.environmentvariabledefinitionid})`,
       });
-    } catch (rollbackError) {
-      rollbackNote = `definition rollback FAILED: ${rollbackError instanceof Error ? rollbackError.message : String(rollbackError)} — definition ${created.body.environmentvariabledefinitionid} ("${schemaName}") is still in solution ${solutionUniqueName} and must be cleaned up manually.`;
+    } catch (caught) {
+      rollbackError = caught;
     }
+
+    if (rollbackError) {
+      // Rollback failed — server-visible state is inconsistent, callers must
+      // clean up the orphan definition manually before any retry.
+      const rollbackMessage = rollbackError instanceof Error ? rollbackError.message : String(rollbackError);
+      throw new PowerAutomateError({
+        code: 'PARTIAL_FAILURE',
+        message: `Value-row creation failed for environment variable "${schemaName}"; rollback of the orphan definition ALSO failed (${rollbackMessage}). Definition ${created.body.environmentvariabledefinitionid} is still in solution ${solutionUniqueName} and must be cleaned up manually. Underlying value-row error: ${valueErrorMessage}`,
+        retryable: false,
+        details: {
+          orphanDefinitionId: created.body.environmentvariabledefinitionid,
+          schemaName,
+          solutionUniqueName,
+          valueError,
+          rollbackError,
+        },
+      });
+    }
+
+    // Rollback succeeded — server state matches pre-call. Caller can retry
+    // safely once the underlying value-row failure (network, transient
+    // Dataverse 5xx, etc.) is addressed.
     throw new PowerAutomateError({
-      code: 'INVALID_REQUEST',
-      message: `Value-row creation failed for environment variable "${schemaName}"; ${rollbackNote} Underlying error: ${valueError instanceof Error ? valueError.message : String(valueError)}`,
-      retryable: false,
-      details: valueError,
+      code: 'ROLLED_BACK',
+      message: `Value-row creation failed for environment variable "${schemaName}"; the orphan definition was rolled back successfully so retry is safe. Underlying error: ${valueErrorMessage}`,
+      retryable: true,
+      details: { schemaName, solutionUniqueName, valueError },
     });
   }
 

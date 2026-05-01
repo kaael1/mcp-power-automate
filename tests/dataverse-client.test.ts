@@ -399,10 +399,58 @@ describe('dataverse-solutions tools', () => {
         type: 'string',
         initialValue: 'will-fail',
       }),
-    ).rejects.toMatchObject({ code: 'INVALID_REQUEST' });
+    ).rejects.toMatchObject({
+      code: 'ROLLED_BACK',
+      retryable: true,
+      message: expect.stringContaining('adres_X'),
+    });
     // Rollback DELETE on the definition was attempted
     expect(deleteCalls).toHaveLength(1);
     expect(deleteCalls[0]).toContain('/environmentvariabledefinitions(def-guid)');
+  });
+
+  it('create_environment_variable surfaces PARTIAL_FAILURE with orphan id when rollback also fails', async () => {
+    await seedSessionsAndTokens();
+    const dvs = await import('../server/dataverse-solutions.js');
+
+    const fetchMock = vi.fn(async (input, init) => {
+      const url = new URL(String(input));
+      const method = (init as RequestInit | undefined)?.method;
+      const path = url.pathname;
+      if (path.endsWith('/solutions') && method === 'GET') {
+        return createJsonResponse({ value: [{ solutionid: 'sol-guid' }] });
+      }
+      if (path.endsWith('/environmentvariabledefinitions') && method === 'POST') {
+        return createJsonResponse({ environmentvariabledefinitionid: 'orphan-guid', schemaname: 'adres_X', type: 100000000 }, 201);
+      }
+      if (path.endsWith('/environmentvariablevalues') && method === 'POST') {
+        return createJsonResponse({ error: { message: 'simulated value-row failure' } }, 500);
+      }
+      if (path.includes('/environmentvariabledefinitions(orphan-guid)') && method === 'DELETE') {
+        return createJsonResponse({ error: { message: 'simulated rollback failure' } }, 500);
+      }
+      throw new Error(`Unexpected fetch ${method} ${url.toString()}`);
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(
+      dvs.createEnvironmentVariable({
+        solutionUniqueName: 'TestSolution',
+        schemaName: 'adres_X',
+        displayName: 'X',
+        type: 'string',
+        initialValue: 'will-fail',
+      }),
+    ).rejects.toMatchObject({
+      code: 'PARTIAL_FAILURE',
+      retryable: false,
+      message: expect.stringContaining('orphan-guid'),
+      details: {
+        orphanDefinitionId: 'orphan-guid',
+        schemaName: 'adres_X',
+        solutionUniqueName: 'TestSolution',
+      },
+    });
   });
 });
 
@@ -599,7 +647,20 @@ describe('Phase 4 lifecycle tools', () => {
         componentId: '0ea141eb-1e63-7aaa-2aec-32e6c6987016',
         componentType: 'environmentVariableDefinition',
       }),
-    ).rejects.toMatchObject({ code: 'INVALID_REQUEST' });
+    ).rejects.toMatchObject({
+      code: 'INVALID_REQUEST',
+      message: expect.stringContaining('TestSolution'),
+    });
+    // Message includes the offending component id so callers can recover
+    await expect(
+      dvs.removeFromSolution({
+        solutionUniqueName: 'TestSolution',
+        componentId: '0ea141eb-1e63-7aaa-2aec-32e6c6987016',
+        componentType: 'environmentVariableDefinition',
+      }),
+    ).rejects.toMatchObject({
+      message: expect.stringContaining('0ea141eb-1e63-7aaa-2aec-32e6c6987016'),
+    });
     // No RemoveSolutionComponent POST should have been issued
     expect(
       fetchMock.mock.calls.find((c) => {
