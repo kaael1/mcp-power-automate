@@ -771,11 +771,11 @@ chrome.webRequest.onBeforeSendHeaders.addListener(
     handleAuxiliaryAudienceRequest(details);
   },
   {
-    urls: [
-      'https://api.bap.microsoft.com/*',
-      'https://*.crm.dynamics.com/api/*',
-      'https://*.api.crm.dynamics.com/*',
-    ],
+    // Chrome match patterns can't wildcard mid-segment, so we widen to
+    // *.dynamics.com (covers crm, crm4, crm15, ... regional stamps and
+    // both org and api.org subdomains) and rely on the JWT-decoding path
+    // to ignore non-JWT-bearing requests.
+    urls: ['https://api.bap.microsoft.com/*', 'https://*.dynamics.com/*'],
   },
   ['requestHeaders', 'extraHeaders'],
 );

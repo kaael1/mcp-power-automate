@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "Power Automate MCP Bridge",
   "description": "Captures the current Power Automate browser session and sends it to a local MCP bridge.",
-  "version": "0.5.0",
+  "version": "0.5.1",
   "permissions": ["storage", "tabs", "webRequest", "sidePanel"],
   "host_permissions": [
     "*://*.flow.microsoft.com/*",
@@ -10,8 +10,7 @@
     "*://*.make.powerapps.com/*",
     "*://*.api.flow.microsoft.com/*",
     "*://*.api.powerplatform.com/*",
-    "*://*.crm.dynamics.com/*",
-    "*://*.api.crm.dynamics.com/*",
+    "*://*.dynamics.com/*",
     "*://api.bap.microsoft.com/*",
     "http://127.0.0.1:17373/*"
   ],
@@ -24,8 +23,7 @@
         "*://*.make.powerautomate.com/*",
         "*://*.flow.microsoft.com/*",
         "*://*.make.powerapps.com/*",
-        "*://*.crm.dynamics.com/*",
-        "*://*.api.crm.dynamics.com/*"
+        "*://*.dynamics.com/*"
       ],
       "js": ["storage-capture.js"],
       "run_at": "document_idle"
@@ -38,8 +36,7 @@
         "*://*.make.powerautomate.com/*",
         "*://*.flow.microsoft.com/*",
         "*://*.make.powerapps.com/*",
-        "*://*.crm.dynamics.com/*",
-        "*://*.api.crm.dynamics.com/*"
+        "*://*.dynamics.com/*"
       ]
     }
   ],
