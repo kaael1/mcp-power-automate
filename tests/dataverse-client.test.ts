@@ -532,10 +532,30 @@ describe('Phase 4 lifecycle tools', () => {
     expect(JSON.parse(init.body as string)).toEqual({ ParameterXml: xml });
   });
 
-  it('remove_from_solution posts RemoveSolutionComponent with the resolved type id', async () => {
+  it('remove_from_solution looks up the solutioncomponents row and posts an @odata.bind reference', async () => {
     await seedSessionsAndTokens();
     const dvs = await import('../server/dataverse-solutions.js');
-    const fetchMock = vi.fn(async () => createJsonResponse({}));
+
+    const fetchMock = vi.fn(async (input, init) => {
+      const url = new URL(String(input));
+      const method = (init as RequestInit | undefined)?.method;
+      const path = url.pathname;
+      if (path.endsWith('/solutions') && method === 'GET') {
+        return createJsonResponse({ value: [{ solutionid: 'sol-guid' }] });
+      }
+      if (path.endsWith('/solutioncomponents') && method === 'GET') {
+        // Verify the lookup filter shape
+        const filter = url.searchParams.get('$filter') ?? '';
+        expect(filter).toContain('_solutionid_value eq sol-guid');
+        expect(filter).toContain('objectid eq 0ea141eb-1e63-7aaa-2aec-32e6c6987016');
+        expect(filter).toContain('componenttype eq 380');
+        return createJsonResponse({ value: [{ solutioncomponentid: 'scc-guid' }] });
+      }
+      if (path.endsWith('/RemoveSolutionComponent') && method === 'POST') {
+        return createJsonResponse({});
+      }
+      throw new Error(`Unexpected fetch ${method} ${url.toString()}`);
+    });
     vi.stubGlobal('fetch', fetchMock);
 
     await dvs.removeFromSolution({
@@ -544,12 +564,48 @@ describe('Phase 4 lifecycle tools', () => {
       componentType: 'environmentVariableDefinition',
     });
 
-    const [calledUrl, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
-    expect(calledUrl).toContain('/RemoveSolutionComponent');
-    expect(JSON.parse(init.body as string)).toEqual({
-      ComponentId: '0ea141eb-1e63-7aaa-2aec-32e6c6987016',
+    const actionCall = fetchMock.mock.calls.find((call) => {
+      const u = new URL(String(call[0]));
+      return u.pathname.endsWith('/RemoveSolutionComponent') && (call[1] as RequestInit | undefined)?.method === 'POST';
+    });
+    expect(actionCall).toBeDefined();
+    expect(JSON.parse((actionCall![1] as RequestInit).body as string)).toEqual({
+      'SolutionComponent@odata.bind': '/solutioncomponents(scc-guid)',
       ComponentType: 380,
       SolutionUniqueName: 'TestSolution',
     });
+  });
+
+  it('remove_from_solution refuses when the component is not in the named solution', async () => {
+    await seedSessionsAndTokens();
+    const dvs = await import('../server/dataverse-solutions.js');
+    const fetchMock = vi.fn(async (input, init) => {
+      const url = new URL(String(input));
+      const method = (init as RequestInit | undefined)?.method;
+      const path = url.pathname;
+      if (path.endsWith('/solutions') && method === 'GET') {
+        return createJsonResponse({ value: [{ solutionid: 'sol-guid' }] });
+      }
+      if (path.endsWith('/solutioncomponents') && method === 'GET') {
+        return createJsonResponse({ value: [] });
+      }
+      throw new Error(`Unexpected fetch ${method} ${url.toString()}`);
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(
+      dvs.removeFromSolution({
+        solutionUniqueName: 'TestSolution',
+        componentId: '0ea141eb-1e63-7aaa-2aec-32e6c6987016',
+        componentType: 'environmentVariableDefinition',
+      }),
+    ).rejects.toMatchObject({ code: 'INVALID_REQUEST' });
+    // No RemoveSolutionComponent POST should have been issued
+    expect(
+      fetchMock.mock.calls.find((c) => {
+        const u = new URL(String(c[0]));
+        return u.pathname.endsWith('/RemoveSolutionComponent');
+      }),
+    ).toBeUndefined();
   });
 });

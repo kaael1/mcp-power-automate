@@ -678,12 +678,39 @@ export const removeFromSolution = async ({
 }: RemoveFromSolutionInput) => {
   const instance = await getInstance(envId);
   const numericType = resolveComponentType(componentType);
+  const solutionId = await findSolutionId(instance, solutionUniqueName);
+
+  // RemoveSolutionComponent's signature differs from AddSolutionComponent:
+  // it takes a *SolutionComponent* entity reference (an @odata.bind to a
+  // solutioncomponents row), NOT a flat ComponentId. So we have to look up
+  // the solutioncomponents row matching this (solution, object, type)
+  // triple before issuing the action call.
+  // See: https://learn.microsoft.com/en-us/power-apps/developer/data-platform/webapi/reference/removesolutioncomponent
+  const lookup = await requestDataverse<{ value: Array<{ solutioncomponentid: string }> }>({
+    instance,
+    method: 'GET',
+    path: 'solutioncomponents',
+    query: {
+      $filter: `_solutionid_value eq ${solutionId} and objectid eq ${componentId} and componenttype eq ${numericType}`,
+      $select: 'solutioncomponentid',
+      $top: 1,
+    },
+  });
+  const sccRow = lookup.body?.value?.[0];
+  if (!sccRow) {
+    throw new PowerAutomateError({
+      code: 'INVALID_REQUEST',
+      message: `Component ${componentId} (type ${numericType}) is not in solution "${solutionUniqueName}".`,
+      retryable: false,
+    });
+  }
+
   await requestDataverse<AnyRecord>({
     instance,
     method: 'POST',
     path: 'RemoveSolutionComponent',
     body: {
-      ComponentId: componentId,
+      'SolutionComponent@odata.bind': `/solutioncomponents(${sccRow.solutioncomponentid})`,
       ComponentType: numericType,
       SolutionUniqueName: solutionUniqueName,
     },
@@ -694,6 +721,7 @@ export const removeFromSolution = async ({
     componentId,
     componentType: numericType,
     componentTypeName: COMPONENT_TYPE_NAMES[numericType] ?? null,
+    solutionComponentId: sccRow.solutioncomponentid,
     ok: true,
   };
 };
