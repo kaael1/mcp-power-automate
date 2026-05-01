@@ -6,7 +6,7 @@ import { useDashboard } from './use-dashboard.js';
 
 const PopupApp = () => {
   const { locale, setLocale } = usePreferredLocale();
-  const { model, phase, refresh, runAction } = useDashboard(locale);
+  const { model, pendingAction, phase, refresh, runAction } = useDashboard(locale);
 
   if (phase.kind === 'loading' || !model) {
     return <LoadingView locale={locale} onLocaleChange={setLocale} surface="popup" />;
@@ -31,6 +31,7 @@ const PopupApp = () => {
       model={model}
       onAction={(action) => void runAction(action)}
       onLocaleChange={setLocale}
+      pendingAction={pendingAction}
     />
   );
 };

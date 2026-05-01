@@ -36,6 +36,7 @@ export function ActionGroup({
   includeOpenPanel,
   locale,
   onAction,
+  pendingAction,
 }: {
   canUseCurrentTab?: boolean;
   hasLastUpdate?: boolean;
@@ -43,8 +44,10 @@ export function ActionGroup({
   includeOpenPanel?: boolean;
   locale: Locale;
   onAction: (action: DashboardAction) => void;
+  pendingAction?: string | null;
 }) {
   type ActionItem = {
+    actionType: string;
     icon: ElementType;
     label: string;
     onClick: () => void;
@@ -55,6 +58,7 @@ export function ActionGroup({
 
   if (includeOpenPanel) {
     actions.push({
+      actionType: 'open-side-panel',
       icon: PanelRightOpen,
       label: t(locale, 'Open workspace', 'Abrir painel'),
       onClick: () => onAction({ type: 'open-side-panel' }),
@@ -64,6 +68,7 @@ export function ActionGroup({
 
   if (canUseCurrentTab) {
     actions.push({
+      actionType: 'select-work-tab',
       icon: Link2,
       label: t(locale, 'Use as work tab', 'Usar como aba de trabalho'),
       onClick: () => onAction({ type: 'select-work-tab' }),
@@ -73,6 +78,7 @@ export function ActionGroup({
 
   if (hasSession) {
     actions.push({
+      actionType: 'refresh-last-run',
       icon: RefreshCcw,
       label: t(locale, 'Refresh run', 'Atualizar execução'),
       onClick: () => onAction({ type: 'refresh-last-run' }),
@@ -82,6 +88,7 @@ export function ActionGroup({
 
   if (hasLastUpdate) {
     actions.push({
+      actionType: 'revert-last-update',
       icon: RotateCcw,
       label: t(locale, 'Undo change', 'Desfazer'),
       onClick: () => onAction({ type: 'revert-last-update' }),
@@ -91,10 +98,20 @@ export function ActionGroup({
 
   if (actions.length === 0) return null;
 
+  const isAnyPending = Boolean(pendingAction);
+
   return (
     <div className="grid grid-cols-2 gap-2">
       {actions.map((action) => (
-        <ActionButton className={actions.length === 1 ? 'col-span-2' : undefined} icon={action.icon} key={action.label} label={action.label} onClick={action.onClick} variant={action.variant} />
+        <ActionButton
+          className={actions.length === 1 ? 'col-span-2' : undefined}
+          disabled={isAnyPending}
+          icon={action.icon}
+          key={action.label}
+          label={pendingAction === action.actionType ? `${action.label}…` : action.label}
+          onClick={action.onClick}
+          variant={action.variant}
+        />
       ))}
     </div>
   );

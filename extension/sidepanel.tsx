@@ -6,7 +6,7 @@ import { useDashboard } from './use-dashboard.js';
 
 const SidePanelApp = () => {
   const { locale, setLocale } = usePreferredLocale();
-  const { model, phase, refresh, runAction } = useDashboard(locale);
+  const { model, pendingAction, phase, refresh, runAction } = useDashboard(locale);
 
   if (phase.kind === 'loading' || !model) {
     return <LoadingView locale={locale} onLocaleChange={setLocale} surface="sidepanel" />;
@@ -31,6 +31,7 @@ const SidePanelApp = () => {
       model={model}
       onAction={(action) => void runAction(action)}
       onLocaleChange={setLocale}
+      pendingAction={pendingAction}
     />
   );
 };

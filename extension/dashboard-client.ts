@@ -1,11 +1,19 @@
 import type { HealthPayload, PopupStatusPayload } from '../server/bridge-types.js';
 import type { DashboardPayload, RuntimeMessage } from './types.js';
 
+// Some background actions (refresh-last-run, refresh-flows, revert-last-update)
+// proxy through 2-3 sequential Power Automate API calls, which routinely
+// take 5-10s. The previous 4.5s ceiling caused those buttons to fail with
+// "The extension background did not reply in time" before the actual call
+// even returned. 30s is enough headroom for the slowest realistic path
+// while still bounding the wait so the UI eventually resolves.
+const RUNTIME_MESSAGE_TIMEOUT_MS = 30000;
+
 export const sendRuntimeMessage = <T>(message: RuntimeMessage) =>
   new Promise<T>((resolve, reject) => {
     const timer = window.setTimeout(() => {
       reject(new Error('The extension background did not reply in time.'));
-    }, 4500);
+    }, RUNTIME_MESSAGE_TIMEOUT_MS);
 
     chrome.runtime.sendMessage(message, (response: T | PopupStatusPayload | undefined) => {
       window.clearTimeout(timer);

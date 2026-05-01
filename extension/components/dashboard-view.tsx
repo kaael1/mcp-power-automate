@@ -216,11 +216,13 @@ function QuickActionsPanel({
   locale,
   model,
   onAction,
+  pendingAction,
 }: {
   includeOpenPanel?: boolean;
   locale: Locale;
   model: DashboardModel;
   onAction: (action: DashboardAction) => void;
+  pendingAction?: string | null;
 }) {
   return (
     <div className="rounded-2xl border border-border bg-white p-4 shadow-sm">
@@ -233,6 +235,7 @@ function QuickActionsPanel({
           includeOpenPanel={includeOpenPanel}
           locale={locale}
           onAction={onAction}
+          pendingAction={pendingAction}
         />
       </div>
       {includeOpenPanel ? (
@@ -253,11 +256,13 @@ function PopupDashboard({
   model,
   onAction,
   onLocaleChange,
+  pendingAction,
 }: {
   locale: Locale;
   model: DashboardModel;
   onAction: (action: DashboardAction) => void;
   onLocaleChange: (locale: Locale) => void;
+  pendingAction?: string | null;
 }) {
   const topAttention = getActionableAttention(model)[0] || null;
 
@@ -272,7 +277,7 @@ function PopupDashboard({
             onAction={() => (topAttention.actionType ? onAction({ type: topAttention.actionType }) : undefined)}
           />
         ) : null}
-        <QuickActionsPanel includeOpenPanel locale={locale} model={model} onAction={onAction} />
+        <QuickActionsPanel includeOpenPanel locale={locale} model={model} onAction={onAction} pendingAction={pendingAction} />
         <RecentActivityPanel locale={locale} model={model} />
         <DiagnosticsBlock
           bridgeMode={model.bridgeMode}
@@ -353,10 +358,12 @@ function TodaySection({
   locale,
   model,
   onAction,
+  pendingAction,
 }: {
   locale: Locale;
   model: DashboardModel;
   onAction: (action: DashboardAction) => void;
+  pendingAction?: string | null;
 }) {
   const actionableItems = getActionableAttention(model);
 
@@ -401,7 +408,7 @@ function TodaySection({
         </div>
 
         <div className="space-y-4">
-          <QuickActionsPanel locale={locale} model={model} onAction={onAction} />
+          <QuickActionsPanel locale={locale} model={model} onAction={onAction} pendingAction={pendingAction} />
           <SignalGrid locale={locale} model={model} />
           <RecentActivityPanel locale={locale} model={model} />
         </div>
@@ -689,13 +696,15 @@ export function PopupDashboardView({
   model,
   onAction,
   onLocaleChange,
+  pendingAction,
 }: {
   locale: Locale;
   model: DashboardModel;
   onAction: (action: DashboardAction) => void;
   onLocaleChange: (locale: Locale) => void;
+  pendingAction?: string | null;
 }) {
-  return <PopupDashboard locale={locale} model={model} onAction={onAction} onLocaleChange={onLocaleChange} />;
+  return <PopupDashboard locale={locale} model={model} onAction={onAction} onLocaleChange={onLocaleChange} pendingAction={pendingAction} />;
 }
 
 export function SidePanelDashboardView({
@@ -704,12 +713,14 @@ export function SidePanelDashboardView({
   model,
   onAction,
   onLocaleChange,
+  pendingAction,
 }: {
   initialSection?: SidePanelSection;
   locale: Locale;
   model: DashboardModel;
   onAction: (action: DashboardAction) => void;
   onLocaleChange: (locale: Locale) => void;
+  pendingAction?: string | null;
 }) {
   const [activeSection, setActiveSection] = useState<SidePanelSection>(initialSection);
 
@@ -717,7 +728,7 @@ export function SidePanelDashboardView({
     flows: <FlowsSection locale={locale} model={model} onAction={onAction} />,
     review: <ReviewSection locale={locale} model={model} onAction={onAction} />,
     system: <SystemSection locale={locale} model={model} onLocaleChange={onLocaleChange} />,
-    today: <TodaySection locale={locale} model={model} onAction={onAction} />,
+    today: <TodaySection locale={locale} model={model} onAction={onAction} pendingAction={pendingAction} />,
   };
 
   return (
