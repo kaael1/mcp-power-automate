@@ -2,20 +2,26 @@ import { PowerAutomateError } from './errors.js';
 import { getSession } from './session-store.js';
 import {
   type DataverseInstance,
+  pickPowerAutomateToken,
+  pickPowerPlatformToken,
   requestDataverse,
   resolveInstanceUrl,
 } from './dataverse-client.js';
 import type {
   AddExistingToSolutionInput,
   ComponentType,
+  CreateConnectionReferenceInput,
   CreateEnvironmentVariableInput,
   CreateSolutionInput,
   DeleteEnvironmentVariableInput,
   DeleteSolutionInput,
   EnvVarType,
+  GetConnectorSpecInput,
+  ListConnectionsInput,
   ListEnvironmentVariablesInput,
   ListSolutionComponentsInput,
   ListSolutionsInput,
+  MigrateFlowToSolutionInput,
   PublishCustomizationsInput,
   RemoveFromSolutionInput,
   SetEnvVarValueInput,
@@ -706,12 +712,9 @@ export const removeFromSolution = async ({
   const numericType = resolveComponentType(componentType);
   const solutionId = await findSolutionId(instance, solutionUniqueName);
 
-  // RemoveSolutionComponent's signature differs from AddSolutionComponent:
-  // it takes a *SolutionComponent* entity reference (an @odata.bind to a
-  // solutioncomponents row), NOT a flat ComponentId. So we have to look up
-  // the solutioncomponents row matching this (solution, object, type)
-  // triple before issuing the action call.
-  // See: https://learn.microsoft.com/en-us/power-apps/developer/data-platform/webapi/reference/removesolutioncomponent
+  // Sanity check: confirm the (solution × component) link exists before issuing
+  // the action — produces a clearer error than letting RemoveSolutionComponent
+  // surface a generic failure.
   const lookup = await requestDataverse<{ value: Array<{ solutioncomponentid: string }> }>({
     instance,
     method: 'GET',
@@ -722,21 +725,24 @@ export const removeFromSolution = async ({
       $top: 1,
     },
   });
-  const sccRow = lookup.body?.value?.[0];
-  if (!sccRow) {
+  if (!lookup.body?.value?.[0]) {
     throw new PowerAutomateError({
       code: 'INVALID_REQUEST',
       message: `Component ${componentId} (type ${numericType}) is not in solution "${solutionUniqueName}".`,
       retryable: false,
     });
   }
-
+  // RemoveSolutionComponent is the unbound action documented for this purpose.
+  // Note: requires Delete privilege on the SolutionComponent system table —
+  // some non-admin users see "ComponentId is not a valid parameter" or similar
+  // misleading errors when the privilege is missing. Use delete_solution
+  // force=true as a workaround when this fails in restricted tenants.
   await requestDataverse<AnyRecord>({
     instance,
     method: 'POST',
     path: 'RemoveSolutionComponent',
     body: {
-      'SolutionComponent@odata.bind': `/solutioncomponents(${sccRow.solutioncomponentid})`,
+      ComponentId: componentId,
       ComponentType: numericType,
       SolutionUniqueName: solutionUniqueName,
     },
@@ -747,7 +753,6 @@ export const removeFromSolution = async ({
     componentId,
     componentType: numericType,
     componentTypeName: COMPONENT_TYPE_NAMES[numericType] ?? null,
-    solutionComponentId: sccRow.solutioncomponentid,
     ok: true,
   };
 };
@@ -815,6 +820,361 @@ export const deleteEnvironmentVariable = async ({ envId, schemaName }: DeleteEnv
     definitionId: definition.environmentvariabledefinitionid,
     deletedValueRows: (definition.environmentvariabledefinition_environmentvariablevalue ?? []).length,
     ok: true,
+  };
+};
+
+// Convert a legacy (non-solution) Power Automate cloud flow into a
+// solution-aware Dataverse workflow row, by adding it to the named
+// solution. Calls the same /migrateFlows endpoint the maker portal uses
+// when a user clicks "Add existing → Cloud flow → Outside Dataverse".
+//
+// MS Learn flags api.flow.microsoft.com as "unsupported" in their
+// public-API guidance, but this is the path the portal itself uses, so
+// it's the only currently-known automation path for this conversion.
+//
+// Token: needs an api.flow.microsoft.com / service.flow.microsoft.com /
+// service.powerapps.com audience. The session's legacyToken or apiToken
+// usually qualifies; otherwise the token-audit pool is searched.
+export const migrateFlowToSolution = async ({
+  envId,
+  flowId,
+  solutionUniqueName,
+}: MigrateFlowToSolutionInput) => {
+  const resolvedEnvId = resolveTargetEnvId(envId);
+  const instance = await getInstance(resolvedEnvId);
+  // Surface a friendly error if the solution doesn't exist before we burn
+  // a (slow) call to migrateFlows that would 404 with a less clear message.
+  const solutionId = await findSolutionId(instance, solutionUniqueName);
+
+  const flowToken = pickPowerAutomateToken();
+  if (!flowToken) {
+    throw new PowerAutomateError({
+      code: 'LEGACY_TOKEN_MISSING',
+      message:
+        `No Power Automate (api.flow.microsoft.com / service.powerapps.com) token captured. ` +
+        `Open https://make.powerautomate.com/environments/${resolvedEnvId}/flows in the browser ` +
+        `with the extension enabled to mint one, then retry.`,
+      retryable: true,
+    });
+  }
+
+  // Endpoint shape captured from the maker portal's actual call (via
+  // Playwright network capture). Uses Microsoft.Flow namespace and
+  // api-version 2018-10-01. Body is the bare flowId GUID — NOT a full
+  // resource path; sending a path here returns 404 FlowNotFound even
+  // though the request is otherwise valid. (The dev.to article that
+  // documented this endpoint had the body shape wrong.)
+  const url =
+    `https://api.flow.microsoft.com/providers/Microsoft.Flow/environments/` +
+    `${encodeURIComponent(resolvedEnvId)}/solutions/${encodeURIComponent(solutionId)}` +
+    `/migrateFlows?api-version=2018-10-01`;
+
+  // Audit-pool tokens carry "Bearer " in their token field, session-derived
+  // candidates strip it. Normalize so the header is always well-formed.
+  const rawJwt = flowToken.token.replace(/^Bearer\s+/i, '');
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${rawJwt}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ flowsToMigrate: [flowId] }),
+  });
+
+  const text = await response.text();
+  let body: unknown = null;
+  if (text) {
+    try {
+      body = JSON.parse(text);
+    } catch {
+      body = text;
+    }
+  }
+
+  if (!response.ok) {
+    if (response.status === 401 || response.status === 403) {
+      throw new PowerAutomateError({
+        code: 'SESSION_EXPIRED',
+        message:
+          `migrateFlows returned ${response.status}. The Power Automate token is expired or insufficient. ` +
+          `Refresh the maker portal page so the extension can recapture a fresh token.`,
+        retryable: true,
+      });
+    }
+    const parsed = body as AnyRecord | string | null;
+    const message =
+      (parsed as AnyRecord | null)?.error?.message ||
+      (parsed as AnyRecord | null)?.message ||
+      (typeof parsed === 'string' && parsed) ||
+      `migrateFlows failed with ${response.status} ${response.statusText}.`;
+    throw new PowerAutomateError({
+      code: 'INVALID_REQUEST',
+      message: String(message),
+      details: { status: response.status, body },
+      retryable: false,
+    });
+  }
+
+  return {
+    envId: resolvedEnvId,
+    flowId,
+    solutionUniqueName,
+    solutionId,
+    response: body,
+    ok: true,
+  };
+};
+
+// List connections in the environment via the per-environment Power
+// Platform API (the same call the maker portal's Connections page makes,
+// captured via Playwright). Endpoint shape:
+//   {sessionApiUrl}/connectivity/connections?api-version=1
+// Token: api.powerplatform.com audience. Filter by connectorApiName client-
+// side (e.g. "shared_office365" or "shared_teams").
+export const listConnections = async ({ envId, connectorApiName }: ListConnectionsInput) => {
+  const resolvedEnvId = resolveTargetEnvId(envId);
+  const session = getSession();
+  const apiUrl = session?.apiUrl;
+  if (!apiUrl) {
+    throw new PowerAutomateError({
+      code: 'NO_SESSION',
+      message:
+        `No captured session.apiUrl available; needed for the per-environment ` +
+        `Power Platform connectivity endpoint. Open a Power Automate flow in the ` +
+        `browser with the extension enabled to capture one.`,
+      retryable: true,
+    });
+  }
+  const ppToken = pickPowerPlatformToken();
+  if (!ppToken) {
+    throw new PowerAutomateError({
+      code: 'BAP_TOKEN_MISSING',
+      message:
+        `No api.powerplatform.com token captured. Open ` +
+        `https://make.powerautomate.com/environments/${resolvedEnvId}/connections ` +
+        `with the extension enabled to mint one.`,
+      retryable: true,
+    });
+  }
+
+  const base = apiUrl.replace(/\/+$/, '');
+  const url = `${base}/connectivity/connections?api-version=1`;
+
+  const rawJwt = ppToken.token.replace(/^Bearer\s+/i, '');
+  const response = await fetch(url, {
+    method: 'GET',
+    headers: {
+      Authorization: `Bearer ${rawJwt}`,
+      Accept: 'application/json',
+    },
+  });
+
+  const text = await response.text();
+  let body: unknown = null;
+  if (text) {
+    try { body = JSON.parse(text); } catch { body = text; }
+  }
+
+  if (!response.ok) {
+    if (response.status === 401 || response.status === 403) {
+      throw new PowerAutomateError({
+        code: 'SESSION_EXPIRED',
+        message: `list connections returned ${response.status}. Refresh the maker portal page to recapture a fresh token.`,
+        retryable: true,
+      });
+    }
+    throw new PowerAutomateError({
+      code: 'INVALID_REQUEST',
+      message: `list connections failed: ${response.status} ${response.statusText}`,
+      details: { status: response.status, body },
+      retryable: false,
+    });
+  }
+
+  const items = ((body as AnyRecord)?.value ?? []) as AnyRecord[];
+  const allConnections = items.map((c) => {
+    const props = (c?.properties as AnyRecord) ?? {};
+    const apiId = (props.apiId as string | undefined) || ((props.api as AnyRecord)?.id as string | undefined);
+    return {
+      connectionName: c?.name as string | undefined,
+      displayName: props.displayName as string | undefined,
+      connectorName: apiId ? String(apiId).split('/').pop() : undefined,
+      connectorId: apiId,
+      status: Array.isArray(props.statuses) && props.statuses[0]?.status,
+      createdTime: props.createdTime as string | undefined,
+      lastModifiedTime: props.lastModifiedTime as string | undefined,
+      ownerEmail: (props.createdBy as AnyRecord)?.email as string | undefined,
+    };
+  });
+
+  const connections = connectorApiName
+    ? allConnections.filter((c) => c.connectorName === connectorApiName)
+    : allConnections;
+
+  return { envId: resolvedEnvId, count: connections.length, connections };
+};
+
+// Create a Dataverse connection reference row in the named solution. When
+// connectionId is supplied, the reference is bound to that real connection
+// at creation time, so a solution-aware flow can use it without a manual
+// "fix connections" step in the maker portal. The schemaName must follow
+// <publisherprefix>_<name> per Dataverse rules.
+export const createConnectionReference = async ({
+  envId,
+  solutionUniqueName,
+  schemaName,
+  displayName,
+  connectorId,
+  connectionId,
+}: CreateConnectionReferenceInput) => {
+  const instance = await getInstance(envId);
+  await findSolutionId(instance, solutionUniqueName);
+
+  const body: AnyRecord = {
+    connectionreferencedisplayname: displayName,
+    connectionreferencelogicalname: schemaName,
+    connectorid: connectorId,
+  };
+  if (connectionId) {
+    body.connectionid = connectionId;
+  }
+
+  const created = await requestDataverse<AnyRecord>({
+    instance,
+    method: 'POST',
+    path: 'connectionreferences',
+    body,
+    headers: { 'MSCRM.SolutionUniqueName': solutionUniqueName },
+  });
+
+  const row = created.body as AnyRecord;
+  return {
+    envId: instance.envId,
+    connectionReference: {
+      connectionReferenceId: row?.connectionreferenceid,
+      schemaName: row?.connectionreferencelogicalname,
+      displayName: row?.connectionreferencedisplayname,
+      connectorId: row?.connectorid,
+      connectionId: row?.connectionid ?? null,
+    },
+    solutionUniqueName,
+  };
+};
+
+// Fetch a connector's Swagger so callers can look up valid operation IDs
+// and parameter shapes BEFORE authoring an OpenApiConnection action — far
+// faster than guess-and-retry on apply_flow_update. Endpoint:
+//   https://api.flow.microsoft.com/providers/Microsoft.PowerApps/apis/{apiName}?$expand=swagger&api-version=2018-08-01
+//
+// Without operationId: returns a compact list of operations
+// (operationId, summary, description, method, path).
+// With operationId: returns the full operation object including parameters
+// (name, in, type, required, description) and responses.
+export const getConnectorSpec = async ({ envId, apiName, operationId }: GetConnectorSpecInput) => {
+  const resolvedEnvId = resolveTargetEnvId(envId);
+  const flowToken = pickPowerAutomateToken();
+  if (!flowToken) {
+    throw new PowerAutomateError({
+      code: 'LEGACY_TOKEN_MISSING',
+      message:
+        `No Power Automate token captured. Open ` +
+        `https://make.powerautomate.com/environments/${resolvedEnvId}/flows ` +
+        `with the extension enabled to mint one.`,
+      retryable: true,
+    });
+  }
+
+  const url =
+    `https://api.flow.microsoft.com/providers/Microsoft.PowerApps/apis/` +
+    `${encodeURIComponent(apiName)}?$expand=swagger&api-version=2018-08-01`;
+
+  const rawJwt = flowToken.token.replace(/^Bearer\s+/i, '');
+  const response = await fetch(url, {
+    method: 'GET',
+    headers: { Authorization: `Bearer ${rawJwt}`, Accept: 'application/json' },
+  });
+
+  const text = await response.text();
+  let body: unknown = null;
+  if (text) {
+    try { body = JSON.parse(text); } catch { body = text; }
+  }
+
+  if (!response.ok) {
+    if (response.status === 401 || response.status === 403) {
+      throw new PowerAutomateError({
+        code: 'SESSION_EXPIRED',
+        message: `Connector spec fetch returned ${response.status}. Refresh the maker portal page to recapture a fresh token.`,
+        retryable: true,
+      });
+    }
+    throw new PowerAutomateError({
+      code: 'INVALID_REQUEST',
+      message: `Connector spec fetch failed: ${response.status} ${response.statusText}`,
+      details: { status: response.status, body },
+      retryable: false,
+    });
+  }
+
+  const root = body as AnyRecord;
+  const props = (root?.properties as AnyRecord) ?? {};
+  const swagger = (props.swagger as AnyRecord) ?? {};
+  const paths = (swagger.paths as AnyRecord) ?? {};
+
+  // Walk Swagger paths → method dictionary → operation object.
+  // Each operation has: operationId, summary, description, parameters,
+  // responses, x-ms-* extensions. Build a flat map keyed by operationId.
+  const operations: Record<string, AnyRecord & { method: string; path: string }> = {};
+  for (const [path, methods] of Object.entries(paths)) {
+    if (!methods || typeof methods !== 'object') continue;
+    for (const [method, op] of Object.entries(methods as AnyRecord)) {
+      if (!op || typeof op !== 'object') continue;
+      const opAny = op as AnyRecord;
+      const opId = opAny.operationId as string | undefined;
+      if (!opId) continue;
+      operations[opId] = { ...opAny, method: method.toUpperCase(), path };
+    }
+  }
+
+  if (operationId) {
+    const op = operations[operationId];
+    if (!op) {
+      const all = Object.keys(operations).sort();
+      throw new PowerAutomateError({
+        code: 'INVALID_REQUEST',
+        message: `Operation '${operationId}' not found in API '${apiName}'.`,
+        details: { availableOperations: all },
+        retryable: false,
+      });
+    }
+    return {
+      apiName,
+      operationId,
+      method: op.method,
+      path: op.path,
+      summary: op.summary,
+      description: op.description,
+      parameters: op.parameters,
+      responses: op.responses,
+    };
+  }
+
+  const summary = Object.entries(operations)
+    .map(([id, op]) => ({
+      operationId: id,
+      method: op.method,
+      path: op.path,
+      summary: op.summary as string | undefined,
+      description: op.description as string | undefined,
+      deprecated: op.deprecated as boolean | undefined,
+    }))
+    .sort((a, b) => a.operationId.localeCompare(b.operationId));
+
+  return {
+    apiName,
+    connectorDisplayName: props.displayName as string | undefined,
+    operationCount: summary.length,
+    operations: summary,
   };
 };
 

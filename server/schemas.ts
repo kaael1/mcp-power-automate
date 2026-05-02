@@ -198,7 +198,9 @@ export const lastRunSchema = z.object({
 });
 
 export const listRunsInputSchema = z.object({
-  limit: z.number().int().positive().max(50).optional(),
+  // Page size for the BAP runs endpoint is small (~30); past that we follow
+  // @odata.nextLink. Bumped to 500 so callers can audit days of history.
+  limit: z.number().int().positive().max(500).optional(),
   target: targetRefSchema.optional(),
 });
 
@@ -213,6 +215,15 @@ export const setActiveFlowInputSchema = z.object({
 
 export const optionalTargetInputSchema = z.object({
   target: targetRefSchema.optional(),
+});
+
+export const deleteFlowInputSchema = z.object({
+  target: targetRefSchema.optional(),
+  // When true, skip the defensive auto-stop step before delete.
+  // The Dataverse workflows row and legacy flow registration both
+  // disappear regardless. Use only if the flow is already stopped or
+  // you want PA's native error surfaced when deleting a running flow.
+  force: z.boolean().optional(),
 });
 
 export const selectWorkTabInputSchema = z.object({
@@ -375,6 +386,32 @@ export const publishCustomizationsInputSchema = z.object({
   parameterXml: z.string().trim().min(1).optional(),
 });
 
+export const migrateFlowToSolutionInputSchema = z.object({
+  envId: envIdSchema.optional(),
+  flowId: flowIdSchema,
+  solutionUniqueName: dataverseUniqueNameSchema,
+});
+
+export const listConnectionsInputSchema = z.object({
+  envId: envIdSchema.optional(),
+  connectorApiName: z.string().trim().min(1).optional(),
+});
+
+export const createConnectionReferenceInputSchema = z.object({
+  envId: envIdSchema.optional(),
+  solutionUniqueName: dataverseUniqueNameSchema,
+  schemaName: dataverseSchemaNameSchema,
+  displayName: z.string().trim().min(1, 'displayName is required'),
+  connectorId: z.string().trim().min(1, 'connectorId is required (e.g. /providers/Microsoft.PowerApps/apis/shared_office365)'),
+  connectionId: z.string().trim().min(1).optional(),
+});
+
+export const getConnectorSpecInputSchema = z.object({
+  envId: envIdSchema.optional(),
+  apiName: z.string().trim().min(1, 'apiName is required (e.g. shared_office365 or shared_teams)'),
+  operationId: z.string().trim().min(1).optional(),
+});
+
 export type FlowId = z.infer<typeof flowIdSchema>;
 export type EnvId = z.infer<typeof envIdSchema>;
 export type SelectionSource = z.infer<typeof selectionSourceSchema>;
@@ -406,6 +443,7 @@ export type ListRunsInput = z.infer<typeof listRunsInputSchema>;
 export type ListFlowsInput = z.infer<typeof listFlowsInputSchema>;
 export type SetActiveFlowInput = z.infer<typeof setActiveFlowInputSchema>;
 export type OptionalTargetInput = z.infer<typeof optionalTargetInputSchema>;
+export type DeleteFlowInput = z.infer<typeof deleteFlowInputSchema>;
 export type SelectWorkTabInput = z.infer<typeof selectWorkTabInputSchema>;
 export type CreateFlowInput = z.infer<typeof createFlowInputSchema>;
 export type CloneFlowInput = z.infer<typeof cloneFlowInputSchema>;
@@ -428,3 +466,7 @@ export type DeleteSolutionInput = z.infer<typeof deleteSolutionInputSchema>;
 export type DeleteEnvironmentVariableInput = z.infer<typeof deleteEnvironmentVariableInputSchema>;
 export type RemoveFromSolutionInput = z.infer<typeof removeFromSolutionInputSchema>;
 export type PublishCustomizationsInput = z.infer<typeof publishCustomizationsInputSchema>;
+export type MigrateFlowToSolutionInput = z.infer<typeof migrateFlowToSolutionInputSchema>;
+export type ListConnectionsInput = z.infer<typeof listConnectionsInputSchema>;
+export type CreateConnectionReferenceInput = z.infer<typeof createConnectionReferenceInputSchema>;
+export type GetConnectorSpecInput = z.infer<typeof getConnectorSpecInputSchema>;

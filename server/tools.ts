@@ -12,6 +12,7 @@ import {
   listCapturedTabs,
   previewFlowUpdate,
   getLatestRun,
+  deleteFlow,
   getRun,
   getRunActions,
   getTriggerCallbackUrl,
@@ -19,6 +20,8 @@ import {
   invokeTrigger,
   listFlows,
   listRuns,
+  startFlow,
+  stopFlow,
   refreshFlows,
   revertLastUpdate,
   selectFlow,
@@ -36,9 +39,13 @@ import {
   createSolution,
   deleteEnvironmentVariable,
   deleteSolution,
+  createConnectionReference,
+  getConnectorSpec,
+  listConnections,
   listEnvironmentVariables,
   listSolutionComponents,
   listSolutions,
+  migrateFlowToSolution,
   publishCustomizations,
   removeFromSolution,
   setEnvVarValue,
@@ -51,14 +58,19 @@ import {
   createFlowInputSchema,
   createSolutionInputSchema,
   deleteEnvironmentVariableInputSchema,
+  deleteFlowInputSchema,
   deleteSolutionInputSchema,
   getRunInputSchema,
   invokeTriggerInputSchema,
   listEnvironmentVariablesInputSchema,
+  createConnectionReferenceInputSchema,
+  getConnectorSpecInputSchema,
+  listConnectionsInputSchema,
   listFlowsInputSchema,
   listRunsInputSchema,
   listSolutionComponentsInputSchema,
   listSolutionsInputSchema,
+  migrateFlowToSolutionInputSchema,
   optionalTargetInputSchema,
   publishCustomizationsInputSchema,
   removeFromSolutionInputSchema,
@@ -510,6 +522,54 @@ export const createMcpApp = () => {
   );
 
   server.registerTool(
+    'start_flow',
+    {
+      description:
+        'Activate (turn on) a cloud flow. Calls the PA legacy /flows/{flowId}/start endpoint. Required after creating a flow or when a flow has been stopped (e.g. by Premium-license enforcement). target.envId + target.flowId required.',
+      inputSchema: optionalTargetInputSchema,
+    },
+    async ({ target }) => {
+      try {
+        return createTextResult(await startFlow({ target }));
+      } catch (error) {
+        return createErrorResult(error);
+      }
+    },
+  );
+
+  server.registerTool(
+    'stop_flow',
+    {
+      description:
+        'Deactivate (turn off) a cloud flow. Calls the PA legacy /flows/{flowId}/stop endpoint. The flow stops firing on its trigger but its definition is preserved.',
+      inputSchema: optionalTargetInputSchema,
+    },
+    async ({ target }) => {
+      try {
+        return createTextResult(await stopFlow({ target }));
+      } catch (error) {
+        return createErrorResult(error);
+      }
+    },
+  );
+
+  server.registerTool(
+    'delete_flow',
+    {
+      description:
+        'Delete a cloud flow from the environment. Defensive: stops the flow first if it\'s running (skipped if force=true). Removes both the legacy flow registration and (for solution-aware flows) the Dataverse workflows row, so the solution component disappears too. WARNING: hard-deletes; cannot be undone via revert_last_update.',
+      inputSchema: deleteFlowInputSchema,
+    },
+    async ({ target, force }) => {
+      try {
+        return createTextResult(await deleteFlow({ target, force }));
+      } catch (error) {
+        return createErrorResult(error);
+      }
+    },
+  );
+
+  server.registerTool(
     'wait_for_run',
     {
       description:
@@ -744,6 +804,70 @@ export const createMcpApp = () => {
     async (input) => {
       try {
         return createTextResult(await deleteEnvironmentVariable(input));
+      } catch (error) {
+        return createErrorResult(error);
+      }
+    },
+  );
+
+  server.registerTool(
+    'get_connector_spec',
+    {
+      description:
+        'Fetch a Power Platform connector\'s Swagger so you know which operationIds and parameters exist BEFORE authoring an OpenApiConnection action. Pass apiName like "shared_office365" or "shared_teams". Without operationId returns a compact list of operations (operationId, method, path, summary). With operationId returns the full operation including parameters (name, in, type, required, description) and responses. Use this to avoid guess-and-retry on apply_flow_update.',
+      inputSchema: getConnectorSpecInputSchema,
+    },
+    async (input) => {
+      try {
+        return createTextResult(await getConnectorSpec(input));
+      } catch (error) {
+        return createErrorResult(error);
+      }
+    },
+  );
+
+  server.registerTool(
+    'list_connections',
+    {
+      description:
+        'List Power Platform connections in the environment (Office 365, Teams, Freshdesk, etc.). Each entry has a connectionName (e.g. shared-office365-<guid>) which is what a connection reference needs to bind to. Filter by connectorApiName like "shared_office365" or "shared_teams".',
+      inputSchema: listConnectionsInputSchema,
+    },
+    async (input) => {
+      try {
+        return createTextResult(await listConnections(input || {}));
+      } catch (error) {
+        return createErrorResult(error);
+      }
+    },
+  );
+
+  server.registerTool(
+    'create_connection_reference',
+    {
+      description:
+        'Create a Dataverse connection reference inside a solution, optionally bound to an existing connection. Use this to wire a solution-aware flow to Office 365 / Teams / etc. without going through the maker portal UI. schemaName must follow <publisherprefix>_<name>. connectorId is the full /providers/Microsoft.PowerApps/apis/<apiName> path. Pass connectionId (from list_connections) to bind immediately; omit to create an unbound reference.',
+      inputSchema: createConnectionReferenceInputSchema,
+    },
+    async (input) => {
+      try {
+        return createTextResult(await createConnectionReference(input));
+      } catch (error) {
+        return createErrorResult(error);
+      }
+    },
+  );
+
+  server.registerTool(
+    'migrate_flow_to_solution',
+    {
+      description:
+        'Convert a legacy (non-solution) Power Automate cloud flow into a solution-aware Dataverse workflow by adding it to the named solution. Mirrors the maker portal\'s "Add existing → Cloud flow → Outside Dataverse" action, calling api.flow.microsoft.com/.../migrateFlows. After migration the flow gains a Dataverse workflows row and becomes referenceable from solution-aware actions like "Run a Child Flow". The flowId argument is the legacy Power Automate flowId (the "owned" view, not the Dataverse workflowid). NOTE: api.flow.microsoft.com is flagged "unsupported" in MS Learn API guidance, but this is the path the maker portal itself uses for this conversion and is the only currently-known automation path.',
+      inputSchema: migrateFlowToSolutionInputSchema,
+    },
+    async (input) => {
+      try {
+        return createTextResult(await migrateFlowToSolution(input));
       } catch (error) {
         return createErrorResult(error);
       }

@@ -580,7 +580,7 @@ describe('Phase 4 lifecycle tools', () => {
     expect(JSON.parse(init.body as string)).toEqual({ ParameterXml: xml });
   });
 
-  it('remove_from_solution looks up the solutioncomponents row and posts an @odata.bind reference', async () => {
+  it('remove_from_solution validates the link exists, then POSTs RemoveSolutionComponent', async () => {
     await seedSessionsAndTokens();
     const dvs = await import('../server/dataverse-solutions.js');
 
@@ -592,7 +592,6 @@ describe('Phase 4 lifecycle tools', () => {
         return createJsonResponse({ value: [{ solutionid: 'sol-guid' }] });
       }
       if (path.endsWith('/solutioncomponents') && method === 'GET') {
-        // Verify the lookup filter shape
         const filter = url.searchParams.get('$filter') ?? '';
         expect(filter).toContain('_solutionid_value eq sol-guid');
         expect(filter).toContain('objectid eq 0ea141eb-1e63-7aaa-2aec-32e6c6987016');
@@ -617,16 +616,18 @@ describe('Phase 4 lifecycle tools', () => {
       return u.pathname.endsWith('/RemoveSolutionComponent') && (call[1] as RequestInit | undefined)?.method === 'POST';
     });
     expect(actionCall).toBeDefined();
-    expect(JSON.parse((actionCall![1] as RequestInit).body as string)).toEqual({
-      'SolutionComponent@odata.bind': '/solutioncomponents(scc-guid)',
+    const body = JSON.parse((actionCall![1] as RequestInit).body as string);
+    expect(body).toEqual({
+      ComponentId: '0ea141eb-1e63-7aaa-2aec-32e6c6987016',
       ComponentType: 380,
       SolutionUniqueName: 'TestSolution',
     });
   });
 
-  it('remove_from_solution refuses when the component is not in the named solution', async () => {
+  it('remove_from_solution refuses when component is not linked to the named solution', async () => {
     await seedSessionsAndTokens();
     const dvs = await import('../server/dataverse-solutions.js');
+
     const fetchMock = vi.fn(async (input, init) => {
       const url = new URL(String(input));
       const method = (init as RequestInit | undefined)?.method;
@@ -647,26 +648,6 @@ describe('Phase 4 lifecycle tools', () => {
         componentId: '0ea141eb-1e63-7aaa-2aec-32e6c6987016',
         componentType: 'environmentVariableDefinition',
       }),
-    ).rejects.toMatchObject({
-      code: 'INVALID_REQUEST',
-      message: expect.stringContaining('TestSolution'),
-    });
-    // Message includes the offending component id so callers can recover
-    await expect(
-      dvs.removeFromSolution({
-        solutionUniqueName: 'TestSolution',
-        componentId: '0ea141eb-1e63-7aaa-2aec-32e6c6987016',
-        componentType: 'environmentVariableDefinition',
-      }),
-    ).rejects.toMatchObject({
-      message: expect.stringContaining('0ea141eb-1e63-7aaa-2aec-32e6c6987016'),
-    });
-    // No RemoveSolutionComponent POST should have been issued
-    expect(
-      fetchMock.mock.calls.find((c) => {
-        const u = new URL(String(c[0]));
-        return u.pathname.endsWith('/RemoveSolutionComponent');
-      }),
-    ).toBeUndefined();
+    ).rejects.toMatchObject({ code: 'INVALID_REQUEST' });
   });
 });

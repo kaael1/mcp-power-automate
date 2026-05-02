@@ -22,6 +22,15 @@ const POWERPLATFORM_AUDIENCES = new Set([
   'https://api.powerplatform.com',
 ]);
 
+const POWER_AUTOMATE_AUDIENCES = new Set([
+  'https://service.flow.microsoft.com/',
+  'https://service.flow.microsoft.com',
+  'https://api.flow.microsoft.com/',
+  'https://api.flow.microsoft.com',
+  'https://service.powerapps.com/',
+  'https://service.powerapps.com',
+]);
+
 const stripTrailingSlash = (value: string) => value.replace(/\/+$/, '');
 
 const safeUrlHost = (value: string): string | null => {
@@ -128,6 +137,24 @@ export const pickPowerPlatformToken = (): TokenCandidate | null => {
   const aud = stripTrailingSlash(apiToken.aud);
   if (POWERPLATFORM_AUDIENCES.has(`${aud}/`) || POWERPLATFORM_AUDIENCES.has(aud)) {
     return apiToken;
+  }
+  return null;
+};
+
+// Tokens for api.flow.microsoft.com (the legacy Power Automate REST API).
+// Used by tools that hit /providers/Microsoft.Flow/... endpoints — most
+// notably migrateFlows, which converts a legacy flow into a solution-aware
+// Dataverse workflow row. Falls back to the session legacyToken/apiToken
+// when the audit doesn't have a fresh service.flow.microsoft.com candidate.
+export const pickPowerAutomateToken = (): TokenCandidate | null => {
+  const fromAudit = findCandidateByAudience(POWER_AUTOMATE_AUDIENCES);
+  if (fromAudit) return fromAudit;
+  for (const fallback of [sessionLegacyTokenAsCandidate(), sessionApiTokenAsCandidate()]) {
+    if (!fallback) continue;
+    const aud = stripTrailingSlash(fallback.aud);
+    if (POWER_AUTOMATE_AUDIENCES.has(`${aud}/`) || POWER_AUTOMATE_AUDIENCES.has(aud)) {
+      return fallback;
+    }
   }
   return null;
 };

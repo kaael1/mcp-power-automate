@@ -1272,6 +1272,18 @@ const normalizeRunAction = (action: AnyRecord): RunActionSummary => {
   };
 };
 
+const fetchLegacyJson = async (url: string, token: string): Promise<AnyRecord> => {
+  const response = await fetch(url, {
+    headers: { Authorization: token, 'Content-Type': 'application/json' },
+    method: 'GET',
+  });
+  const body = await readResponseBody(response);
+  if (!response.ok) {
+    throw toApiError(response, body);
+  }
+  return (body as AnyRecord) ?? {};
+};
+
 const listRunsLegacy = async (session: TargetSession, { limit = 10 }: ListRunsInput = {}) => {
   const legacySession = getPreferredLegacySession(session);
 
@@ -1282,18 +1294,30 @@ const listRunsLegacy = async (session: TargetSession, { limit = 10 }: ListRunsIn
     });
   }
 
-  const response = await requestJson<AnyRecord>({
-    apiVersion: LEGACY_API_VERSION,
-    baseUrl: legacySession.baseUrl,
-    method: 'GET',
-    resourcePath: `${getLegacyFlowBasePath(session.envId, session.flowId)}/runs`,
-    token: legacySession.token,
-  });
+  // Follow @odata.nextLink (legacy API) or nextLink until limit satisfied.
+  // Each page is ~30 runs; for hourly flows that's a single calendar day, so
+  // auditing a week of history requires 5-7 pages worth of follow-ups.
+  const collected: AnyRecord[] = [];
+  let nextUrl: string | null = buildRequestUrl(
+    legacySession.baseUrl,
+    `${getLegacyFlowBasePath(session.envId, session.flowId)}/runs`,
+    LEGACY_API_VERSION,
+  ).toString();
 
-  const runs = Array.isArray(response?.value) ? response.value : [];
+  // Cap pages defensively so a malformed nextLink chain can't loop forever.
+  const maxPages = Math.max(1, Math.ceil(limit / 10) + 5);
+  let pages = 0;
+
+  while (nextUrl && collected.length < limit && pages < maxPages) {
+    const page: AnyRecord = await fetchLegacyJson(nextUrl, legacySession.token);
+    const pageRuns = Array.isArray(page?.value) ? page.value : [];
+    collected.push(...pageRuns);
+    nextUrl = (page?.nextLink as string) || (page?.['@odata.nextLink'] as string) || null;
+    pages += 1;
+  }
 
   return {
-    runs: runs.slice(0, limit).map((run: AnyRecord) => normalizeRun(session, run)),
+    runs: collected.slice(0, limit).map((run: AnyRecord) => normalizeRun(session, run)),
     source: legacySession.source,
   };
 };
@@ -1412,6 +1436,86 @@ export const validateCurrentFlow = async ({ flow, target }: ValidateFlowInput) =
 export const listRuns = async ({ limit = 10, target }: ListRunsInput = {}) => {
   const session = ensureTargetSession(target);
   return listRunsLegacy(session, { limit });
+};
+
+// Start (activate) a cloud flow via the PA legacy API.
+//   POST {legacyBaseUrl}/providers/Microsoft.ProcessSimple/environments/{envId}/flows/{flowId}/start?api-version=...
+const postLegacyFlowAction = async (
+  session: TargetSession,
+  action: 'start' | 'stop',
+): Promise<{ ok: true; action: typeof action; flowId: string; source: string }> => {
+  const legacySession = getPreferredLegacySession(session);
+  if (!legacySession) {
+    throw new PowerAutomateSessionError({
+      code: 'LEGACY_TOKEN_MISSING',
+      message: 'No flow-compatible legacy token is available yet. Refresh the flow page so the extension can capture one.',
+    });
+  }
+  const url = buildRequestUrl(
+    legacySession.baseUrl,
+    `${getLegacyFlowBasePath(session.envId, session.flowId)}/${action}`,
+    LEGACY_API_VERSION,
+  ).toString();
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: { Authorization: legacySession.token, 'Content-Type': 'application/json' },
+  });
+  const body = await readResponseBody(response);
+  if (!response.ok) {
+    throw toApiError(response, body);
+  }
+  return { ok: true, action, flowId: session.flowId, source: legacySession.source };
+};
+
+export const startFlow = async ({ target }: { target?: TargetRef } = {}) => {
+  const session = ensureTargetSession(target);
+  return postLegacyFlowAction(session, 'start');
+};
+
+export const stopFlow = async ({ target }: { target?: TargetRef } = {}) => {
+  const session = ensureTargetSession(target);
+  return postLegacyFlowAction(session, 'stop');
+};
+
+// Delete a cloud flow. Defensive: if the flow is currently "Started",
+// auto-stop first unless force=true is passed (in which case the API
+// failure surfaces directly to the caller). Removes both the legacy
+// flow registration and (for solution-aware flows) the Dataverse
+// workflows row, so the solution component disappears too.
+export const deleteFlow = async ({
+  target,
+  force,
+}: { target?: TargetRef; force?: boolean } = {}) => {
+  const session = ensureTargetSession(target);
+  const legacySession = getPreferredLegacySession(session);
+  if (!legacySession) {
+    throw new PowerAutomateSessionError({
+      code: 'LEGACY_TOKEN_MISSING',
+      message: 'No flow-compatible legacy token is available yet. Refresh the flow page so the extension can capture one.',
+    });
+  }
+  if (!force) {
+    // Best-effort stop. Ignore failures (flow may already be stopped).
+    try {
+      await postLegacyFlowAction(session, 'stop');
+    } catch {
+      // intentionally ignored — proceed to delete
+    }
+  }
+  const url = buildRequestUrl(
+    legacySession.baseUrl,
+    getLegacyFlowBasePath(session.envId, session.flowId),
+    LEGACY_API_VERSION,
+  ).toString();
+  const response = await fetch(url, {
+    method: 'DELETE',
+    headers: { Authorization: legacySession.token, 'Content-Type': 'application/json' },
+  });
+  const body = await readResponseBody(response);
+  if (!response.ok) {
+    throw toApiError(response, body);
+  }
+  return { ok: true, action: 'delete' as const, flowId: session.flowId, source: legacySession.source };
 };
 
 export const getRun = async ({ runId, target }: { runId: string; target?: TargetRef }) => {
