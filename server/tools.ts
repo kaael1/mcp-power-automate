@@ -82,11 +82,24 @@ import {
   validateFlowInputSchema,
   waitForRunInputSchema,
 } from './schemas.js';
+import { formatPayload, type ResponseFormat } from './output-format.js';
 
-const createTextResult = <T>(payload: T) => ({
-  content: [{ type: 'text' as const, text: JSON.stringify(payload, null, 2) }],
-  structuredContent: payload as Record<string, unknown>,
-});
+const createTextResult = <T>(payload: T, responseFormat: ResponseFormat = 'json') => {
+  const { text, format } = formatPayload(payload, responseFormat);
+  // When we emit TOON we drop `structuredContent` — leaving it set
+  // would round-trip the payload back through JSON serialization in
+  // any client that consumes both fields, defeating the token
+  // savings. Tools that opt into TOON also opt out of structured
+  // content; their callers can pass responseFormat: 'json' to recover
+  // it when needed.
+  if (format === 'toon') {
+    return { content: [{ type: 'text' as const, text }] };
+  }
+  return {
+    content: [{ type: 'text' as const, text }],
+    structuredContent: payload as Record<string, unknown>,
+  };
+};
 
 const createErrorResult = (error: unknown) => ({
   content: [{ type: 'text' as const, text: JSON.stringify(toErrorPayload(error), null, 2) }],
@@ -200,9 +213,9 @@ export const createMcpApp = () => {
       description: 'List flows from the currently captured environment and optionally filter by name.',
       inputSchema: listFlowsInputSchema,
     },
-    async ({ limit, query }) => {
+    async ({ limit, query, responseFormat }) => {
       try {
-        return createTextResult(await listFlows({ limit, query }));
+        return createTextResult(await listFlows({ limit, query }), responseFormat ?? 'auto');
       } catch (error) {
         return createErrorResult(error);
       }
@@ -437,9 +450,9 @@ export const createMcpApp = () => {
       description: 'List recent runs for the selected flow target.',
       inputSchema: listRunsInputSchema,
     },
-    async ({ limit, target }) => {
+    async ({ limit, target, responseFormat }) => {
       try {
-        return createTextResult(await listRuns({ limit, target }));
+        return createTextResult(await listRuns({ limit, target }), responseFormat ?? 'auto');
       } catch (error) {
         return createErrorResult(error);
       }
@@ -659,7 +672,8 @@ export const createMcpApp = () => {
     },
     async (input) => {
       try {
-        return createTextResult(await listSolutions(input || {}));
+        const { responseFormat, ...rest } = input ?? {};
+        return createTextResult(await listSolutions(rest), responseFormat ?? 'auto');
       } catch (error) {
         return createErrorResult(error);
       }
@@ -739,7 +753,8 @@ export const createMcpApp = () => {
     },
     async (input) => {
       try {
-        return createTextResult(await listSolutionComponents(input));
+        const { responseFormat, ...rest } = input;
+        return createTextResult(await listSolutionComponents(rest), responseFormat ?? 'auto');
       } catch (error) {
         return createErrorResult(error);
       }
@@ -755,7 +770,8 @@ export const createMcpApp = () => {
     },
     async (input) => {
       try {
-        return createTextResult(await listEnvironmentVariables(input || {}));
+        const { responseFormat, ...rest } = input ?? {};
+        return createTextResult(await listEnvironmentVariables(rest), responseFormat ?? 'auto');
       } catch (error) {
         return createErrorResult(error);
       }
@@ -819,7 +835,8 @@ export const createMcpApp = () => {
     },
     async (input) => {
       try {
-        return createTextResult(await getConnectorSpec(input));
+        const { responseFormat, ...rest } = input;
+        return createTextResult(await getConnectorSpec(rest), responseFormat ?? 'auto');
       } catch (error) {
         return createErrorResult(error);
       }
@@ -835,7 +852,8 @@ export const createMcpApp = () => {
     },
     async (input) => {
       try {
-        return createTextResult(await listConnections(input || {}));
+        const { responseFormat, ...rest } = input ?? {};
+        return createTextResult(await listConnections(rest), responseFormat ?? 'auto');
       } catch (error) {
         return createErrorResult(error);
       }

@@ -197,16 +197,29 @@ export const lastRunSchema = z.object({
   run: runSummarySchema.nullable(),
 });
 
+// `responseFormatField` is added to the seven list-shaped tool input
+// schemas. Defaults to `'auto'` which emits TOON for tabular payloads
+// (saves 30–50% tokens) and JSON otherwise. See server/output-format.ts.
+const responseFormatField = z
+  .enum(['auto', 'toon', 'json'])
+  .default('auto')
+  .optional()
+  .describe(
+    "Output format. 'auto' (default) emits TOON for tabular payloads, JSON otherwise. 'toon' forces TOON, 'json' forces JSON. Pass 'json' if a non-LLM caller will pipe the result to a tool that expects JSON.",
+  );
+
 export const listRunsInputSchema = z.object({
   // Page size for the BAP runs endpoint is small (~30); past that we follow
   // @odata.nextLink. Bumped to 500 so callers can audit days of history.
   limit: z.number().int().positive().max(500).optional(),
   target: targetRefSchema.optional(),
+  responseFormat: responseFormatField,
 });
 
 export const listFlowsInputSchema = z.object({
   limit: z.number().int().positive().max(200).optional(),
   query: z.string().trim().min(1).optional(),
+  responseFormat: responseFormatField,
 });
 
 export const setActiveFlowInputSchema = z.object({
@@ -309,6 +322,7 @@ export const listSolutionsInputSchema = z.object({
   envId: envIdSchema.optional(),
   includeManaged: z.boolean().optional(),
   query: z.string().trim().min(1).optional(),
+  responseFormat: responseFormatField,
 });
 
 export const createSolutionInputSchema = z.object({
@@ -356,11 +370,13 @@ export const listSolutionComponentsInputSchema = z.object({
   envId: envIdSchema.optional(),
   solutionUniqueName: dataverseUniqueNameSchema,
   enrich: z.boolean().optional(),
+  responseFormat: responseFormatField,
 });
 
 export const listEnvironmentVariablesInputSchema = z.object({
   envId: envIdSchema.optional(),
   solutionUniqueName: dataverseUniqueNameSchema.optional(),
+  responseFormat: responseFormatField,
 });
 
 export const deleteSolutionInputSchema = z.object({
@@ -395,6 +411,7 @@ export const migrateFlowToSolutionInputSchema = z.object({
 export const listConnectionsInputSchema = z.object({
   envId: envIdSchema.optional(),
   connectorApiName: z.string().trim().min(1).optional(),
+  responseFormat: responseFormatField,
 });
 
 export const createConnectionReferenceInputSchema = z.object({
@@ -410,6 +427,7 @@ export const getConnectorSpecInputSchema = z.object({
   envId: envIdSchema.optional(),
   apiName: z.string().trim().min(1, 'apiName is required (e.g. shared_office365 or shared_teams)'),
   operationId: z.string().trim().min(1).optional(),
+  responseFormat: responseFormatField,
 });
 
 export type FlowId = z.infer<typeof flowIdSchema>;
