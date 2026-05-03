@@ -268,21 +268,37 @@ const readResponseBody = async (response: Response): Promise<unknown> => {
 };
 
 const toApiError = (response: Response, body: unknown) => {
-  if (response.status === 401 || response.status === 403) {
-    return new PowerAutomateSessionError({
-      code: 'SESSION_EXPIRED',
-      message:
-        'The captured Power Automate session is expired or invalid. Reopen or refresh the flow in the browser to capture a fresh token.',
-      retryable: true,
-    });
-  }
-
+  // Extract whatever PA actually said in the response body so we can
+  // surface it instead of a hand-waving "session expired". 401 vs 403
+  // and the API's own error code/message are critical for diagnosing
+  // scope/permission problems vs. genuine auth expiry.
   const parsedBody = body as AnyRecord | string | null;
-  const message =
+  const apiErrorCode =
+    (parsedBody as AnyRecord | null)?.error?.code ||
+    (parsedBody as AnyRecord | null)?.code ||
+    null;
+  const apiMessage =
     (parsedBody as AnyRecord | null)?.error?.message ||
     (parsedBody as AnyRecord | null)?.message ||
     (typeof parsedBody === 'string' && parsedBody) ||
-    `Power Automate API request failed with ${response.status} ${response.statusText}.`;
+    null;
+
+  if (response.status === 401 || response.status === 403) {
+    return new PowerAutomateSessionError({
+      code: 'SESSION_EXPIRED',
+      message: apiMessage
+        ? `Power Automate API ${response.status} (${apiErrorCode || 'no code'}): ${apiMessage}`
+        : `Power Automate API rejected the captured token with HTTP ${response.status}. Reopen or refresh the flow in the browser to capture a fresh token.`,
+      retryable: true,
+      details: {
+        httpStatus: response.status,
+        apiErrorCode,
+      },
+    });
+  }
+
+  const message =
+    apiMessage || `Power Automate API request failed with ${response.status} ${response.statusText}.`;
 
   return new Error(message);
 };
