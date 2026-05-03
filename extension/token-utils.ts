@@ -69,6 +69,27 @@ export const scoreToken = (bearerToken: string): TokenScore => {
   };
 };
 
+/**
+ * Returns true if the bearer token is missing, malformed, has no `exp`
+ * claim, or its `exp` is at-or-before `now + skewSeconds`. Used as a
+ * tiebreaker in token promotion: a stale-but-high-score token must not
+ * outrank a fresh-but-low-score one, otherwise the bridge keeps serving
+ * dead Bearers and every API call returns 401 SESSION_EXPIRED.
+ *
+ * `skewSeconds` defaults to 60 — refusing tokens within a minute of
+ * expiry avoids racing PA's MSAL refresh cycle (the page typically
+ * pre-refreshes a few seconds before expiry, but the captured copy
+ * always lags slightly behind).
+ */
+export const isTokenExpired = (bearerToken: string, skewSeconds = 60): boolean => {
+  if (!bearerToken) return true;
+  const raw = bearerToken.replace(/^Bearer\s+/i, '');
+  const payload = decodeJwtPayload(raw);
+  if (!payload?.exp) return true;
+  const now = Math.floor(Date.now() / 1000);
+  return payload.exp <= now + skewSeconds;
+};
+
 export const extractTokenCandidates = (value: unknown) => {
   const candidates = new Set<string>();
 
