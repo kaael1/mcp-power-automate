@@ -1,6 +1,6 @@
 import type { ContextPayload, PopupStatusPayload, PopupTokenMeta } from '../server/bridge-types.js';
 import type { CaptureDiagnostic, CapturedSession, FlowSnapshot, LastRun, LastUpdate, Session, TokenAudit } from '../server/schemas.js';
-import { decodeJwtPayload, scoreToken } from './token-utils.js';
+import { decodeJwtPayload, isTokenExpired, scoreToken } from './token-utils.js';
 import { buildBaseUrl, extractAuthorization, extractFromApiUrl, extractFromPortalUrl } from './url-utils.js';
 import {
   BRIDGE_SIGNAL,
@@ -149,7 +149,20 @@ const maybePromoteApiToken = async (tabState: BackgroundTabState, nextToken: str
   const current = scoreToken(tabState.apiToken || '');
   const candidate = scoreToken(nextToken);
 
-  if (!tabState.apiToken || candidate.score >= current.score) {
+  // Promote when there's no current token, or the new token is at-
+  // least as well-scoped as what we already have, OR the current
+  // token is expired/near-expiry. Without the expiry check, an old
+  // high-score token wins forever — even after it dies — which
+  // produces a steady stream of 401 SESSION_EXPIRED errors that no
+  // amount of refreshing the PA tab can clear.
+  const currentExpired = isTokenExpired(tabState.apiToken || '');
+  const candidateExpired = isTokenExpired(nextToken);
+  const shouldPromote =
+    !tabState.apiToken ||
+    candidate.score >= current.score ||
+    (currentExpired && !candidateExpired);
+
+  if (shouldPromote) {
     const nextMeta: PopupTokenMeta = {
       score: candidate.score,
       scope: candidate.scopeText,

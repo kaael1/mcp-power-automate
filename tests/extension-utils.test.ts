@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 
-import { dedupeFindings, extractTokenCandidates, scoreScopes, scoreToken } from '../extension/token-utils.js';
+import { dedupeFindings, extractTokenCandidates, isTokenExpired, scoreScopes, scoreToken } from '../extension/token-utils.js';
 import { buildBaseUrl, extractBestFlowLocation, extractFromApiUrl, extractFromPortalUrl } from '../extension/url-utils.js';
 
 const encodeJwt = (payload: Record<string, unknown>) => {
@@ -112,5 +112,50 @@ describe('extension helpers', () => {
       portalUrl:
         'https://make.powerautomate.com/environments/Default-123/solutions/~preferred/flows/123e4567-e89b-12d3-a456-426614174000?v3=true',
     });
+  });
+});
+
+describe('isTokenExpired', () => {
+  beforeEach(() => {
+    Object.assign(globalThis, {
+      atob: (value: string) => Buffer.from(value, 'base64').toString('utf8'),
+    });
+  });
+
+  const nowSeconds = () => Math.floor(Date.now() / 1000);
+
+  it('returns true for an empty / missing token', () => {
+    expect(isTokenExpired('')).toBe(true);
+  });
+
+  it('returns true for a token whose `exp` is in the past', () => {
+    const token = encodeJwt({ aud: 'https://service.flow.microsoft.com', exp: nowSeconds() - 600 });
+    expect(isTokenExpired(token)).toBe(true);
+  });
+
+  it('returns true for a token with no `exp` claim (cannot verify freshness)', () => {
+    const token = encodeJwt({ aud: 'https://service.flow.microsoft.com' });
+    expect(isTokenExpired(token)).toBe(true);
+  });
+
+  it('returns true within the default 60s safety skew', () => {
+    const token = encodeJwt({ aud: 'https://service.flow.microsoft.com', exp: nowSeconds() + 30 });
+    expect(isTokenExpired(token)).toBe(true);
+  });
+
+  it('returns false for a comfortably-fresh token', () => {
+    const token = encodeJwt({ aud: 'https://service.flow.microsoft.com', exp: nowSeconds() + 1800 });
+    expect(isTokenExpired(token)).toBe(false);
+  });
+
+  it('respects the Bearer prefix', () => {
+    const token = `Bearer ${encodeJwt({ aud: 'x', exp: nowSeconds() + 1800 })}`;
+    expect(isTokenExpired(token)).toBe(false);
+  });
+
+  it('honours a caller-supplied skew', () => {
+    const token = encodeJwt({ aud: 'x', exp: nowSeconds() + 120 });
+    expect(isTokenExpired(token, 60)).toBe(false);
+    expect(isTokenExpired(token, 200)).toBe(true);
   });
 });
