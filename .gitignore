@@ -10,3 +10,8 @@ data/*.json
 !data/.gitkeep
 FLOW_REVIEW.md
 .mcpregistry_*
+
+# This repo uses bun (see bun.lock). npm-generated lockfiles do not belong.
+package-lock.json
+yarn.lock
+pnpm-lock.yaml
