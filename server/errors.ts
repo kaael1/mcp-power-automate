@@ -3,6 +3,7 @@ export type PowerAutomateErrorCode =
   | 'NO_TARGET'
   | 'FLOW_NOT_FOUND'
   | 'LEGACY_TOKEN_MISSING'
+  | 'NO_API_TOKEN'
   | 'SESSION_EXPIRED'
   | 'TARGET_MISMATCH'
   | 'TRIGGER_NOT_FOUND'

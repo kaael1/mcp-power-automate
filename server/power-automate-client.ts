@@ -45,7 +45,7 @@ import type {
 } from './schemas.js';
 import { editorSchema } from './schemas.js';
 import { hasManageSolutionsTokens } from './dataverse-client.js';
-import { PowerAutomateSessionError } from './errors.js';
+import { PowerAutomateError, PowerAutomateSessionError } from './errors.js';
 import { getSession } from './session-store.js';
 import { getSelectedWorkTab, saveSelectedWorkTab } from './selected-work-tab-store.js';
 import { getStoreDiagnostics } from './store-utils.js';
@@ -92,16 +92,33 @@ type RunActionSummary = {
 };
 
 const ensureSession = (): Session => {
-  const session = getSession();
-
-  if (!session) {
-    throw new PowerAutomateSessionError({
-      code: 'NO_SESSION',
-      message: 'No active browser session found. Open or refresh the target flow in Power Automate with the extension enabled.',
-    });
+  // Prefer the *selected work tab's* captured session over the latest-
+  // focused active session. The active session.json is rewritten every
+  // time any PA tab gains focus and only carries the modern token; the
+  // captured-sessions store keeps every tab's full state including
+  // `legacyToken` + `legacyApiUrl`. When the user has explicitly chosen
+  // a work tab via select_work_tab, that's the one whose session we
+  // should be using for API calls — otherwise hasLegacy=false even
+  // when a perfectly-good legacy token is sitting in the captured
+  // store, and apply_flow_update can't fall back from a scope-limited
+  // modern token to the broader-scoped legacy one.
+  const selectedTab = getSelectedWorkTab();
+  if (selectedTab) {
+    const tabSession = getCapturedSession(selectedTab.tabId);
+    if (tabSession) {
+      return tabSession;
+    }
   }
 
-  return session;
+  const session = getSession();
+  if (session) {
+    return session;
+  }
+
+  throw new PowerAutomateSessionError({
+    code: 'NO_SESSION',
+    message: 'No active browser session found. Open or refresh the target flow in Power Automate with the extension enabled.',
+  });
 };
 
 const createTabTargetFromSession = (session: Session): ActiveTarget | null => {
@@ -832,10 +849,63 @@ const updateCurrentFlowLegacy = async (session: TargetSession, { displayName, fl
 export const applyFlowUpdate = async ({ displayName, flow, target }: UpdateFlowInput) => {
   const session = ensureTargetSession(target);
 
+  // Modern is the authoritative API and should be tried first whenever
+  // an api.powerplatform.com token is captured. Legacy is the fallback
+  // for older flows / older PA UI captures that only mint
+  // service.flow.microsoft.com tokens. `getPreferredLegacySession`
+  // also accepts a legacy-compatible token harvested from the token
+  // audit (e.g. a service.powerapps.com token captured incidentally
+  // from a BAP request) — so the right check is whether that helper
+  // returns something, not whether the session itself carries the
+  // legacy fields.
+  const hasModern = Boolean(session.apiToken && session.apiUrl);
+  const hasLegacy = Boolean(getPreferredLegacySession(session));
+
+  if (!hasModern && !hasLegacy) {
+    throw new PowerAutomateSessionError({
+      code: 'NO_API_TOKEN',
+      message:
+        'Neither a modern (api.powerplatform.com) nor a legacy (api.flow.microsoft.com) token is captured for this session. Open or refresh a flow page in Power Automate to capture one.',
+    });
+  }
+
+  let modernError: unknown;
+  if (hasModern) {
+    try {
+      return await updateCurrentFlowModern(session, { displayName, flow });
+    } catch (error) {
+      modernError = error;
+      // Only fall through to legacy if a legacy token exists. Without
+      // this guard, a real 4xx from the modern PATCH gets masqueraded
+      // as LEGACY_TOKEN_MISSING and the actual reason (validation,
+      // permissions, schema mismatch) is hidden from the user.
+      if (!hasLegacy) {
+        throw error;
+      }
+    }
+  }
+
   try {
-    return await updateCurrentFlowModern(session, { displayName, flow });
-  } catch {
-    return updateCurrentFlowLegacy(session, { displayName, flow });
+    return await updateCurrentFlowLegacy(session, { displayName, flow });
+  } catch (legacyError) {
+    // Both paths attempted and both failed. The legacy error is more
+    // useful for diagnosis — modern's 401 typically means "scope is
+    // wrong for this token", which the user can't act on directly.
+    // The legacy path tells us whether the body shape, target flow,
+    // or permissions are the actual problem. If both errors carry
+    // information, attach the modern one as a secondary detail.
+    if (
+      legacyError instanceof PowerAutomateError &&
+      modernError instanceof Error
+    ) {
+      throw new PowerAutomateError({
+        code: legacyError.code,
+        message: `Modern PATCH failed (${(modernError as { code?: string }).code ?? 'UNKNOWN'}: ${modernError.message}); legacy PATCH also failed: ${legacyError.message}`,
+        details: { ...(legacyError.details || {}), modernError: { message: modernError.message } },
+        retryable: legacyError.retryable,
+      });
+    }
+    throw legacyError;
   }
 };
 
