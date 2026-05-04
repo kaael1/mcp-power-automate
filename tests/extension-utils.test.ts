@@ -1,6 +1,13 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 
-import { dedupeFindings, extractTokenCandidates, isTokenExpired, scoreScopes, scoreToken } from '../extension/token-utils.js';
+import {
+  dedupeFindings,
+  extractTokenCandidates,
+  isTokenExpired,
+  scoreScopes,
+  scoreToken,
+  shouldPromoteApiToken,
+} from '../extension/token-utils.js';
 import { buildBaseUrl, extractBestFlowLocation, extractFromApiUrl, extractFromPortalUrl } from '../extension/url-utils.js';
 
 const encodeJwt = (payload: Record<string, unknown>) => {
@@ -157,5 +164,62 @@ describe('isTokenExpired', () => {
     const token = encodeJwt({ aud: 'x', exp: nowSeconds() + 120 });
     expect(isTokenExpired(token, 60)).toBe(false);
     expect(isTokenExpired(token, 200)).toBe(true);
+  });
+});
+
+describe('shouldPromoteApiToken', () => {
+  beforeEach(() => {
+    Object.assign(globalThis, {
+      atob: (value: string) => Buffer.from(value, 'base64').toString('utf8'),
+    });
+  });
+
+  const nowSeconds = () => Math.floor(Date.now() / 1000);
+
+  const token = ({ aud, exp, scp }: { aud: string; exp: number; scp?: string }) =>
+    `Bearer ${encodeJwt({
+      aud,
+      exp,
+      scp,
+    })}`;
+
+  it('promotes the first captured token', () => {
+    expect(
+      shouldPromoteApiToken(
+        null,
+        token({
+          aud: 'https://api.powerplatform.com',
+          exp: nowSeconds() + 1800,
+        }),
+      ),
+    ).toBe(true);
+  });
+
+  it('promotes a fresh lower-score token when the current token is expired', () => {
+    const expiredHighScore = token({
+      aud: 'https://service.flow.microsoft.com',
+      exp: nowSeconds() - 600,
+      scp: 'PowerAutomate.Flow.Read PowerAutomate.Flow.Write',
+    });
+    const freshLowerScore = token({
+      aud: 'https://api.powerplatform.com',
+      exp: nowSeconds() + 1800,
+    });
+
+    expect(shouldPromoteApiToken(expiredHighScore, freshLowerScore)).toBe(true);
+  });
+
+  it('does not promote a lower-score token while the current token is fresh', () => {
+    const freshHighScore = token({
+      aud: 'https://service.flow.microsoft.com',
+      exp: nowSeconds() + 1800,
+      scp: 'PowerAutomate.Flow.Read PowerAutomate.Flow.Write',
+    });
+    const freshLowerScore = token({
+      aud: 'https://api.powerplatform.com',
+      exp: nowSeconds() + 1800,
+    });
+
+    expect(shouldPromoteApiToken(freshHighScore, freshLowerScore)).toBe(false);
   });
 });

@@ -92,6 +92,16 @@ export const isTokenExpired = (bearerToken: string, skewSeconds = 60): boolean =
   return payload.exp <= now + skewSeconds;
 };
 
+export const shouldPromoteApiToken = (currentToken: string | null | undefined, nextToken: string): boolean => {
+  if (!nextToken) return false;
+  if (!currentToken) return true;
+
+  const current = scoreToken(currentToken);
+  const candidate = scoreToken(nextToken);
+
+  return candidate.score >= current.score || (isTokenExpired(currentToken) && !isTokenExpired(nextToken));
+};
+
 export const extractTokenCandidates = (value: unknown) => {
   const candidates = new Set<string>();
 
