@@ -32,3 +32,34 @@ export const saveTokenAudit = async (audit: TokenAudit) => {
   activeTokenAudit = parsed;
   return parsed;
 };
+
+const isExpiredCandidate = (candidate: TokenAudit['candidates'][number]) =>
+  typeof candidate.exp === 'number' && candidate.exp * 1000 <= Date.now();
+
+const tokenKey = (token: string) => token.replace(/^Bearer\s+/i, '');
+
+export const mergeTokenAudit = async (audit: TokenAudit) => {
+  const parsed = tokenAuditSchema.parse(audit);
+  const existing = activeTokenAudit;
+  const byToken = new Map<string, TokenAudit['candidates'][number]>();
+
+  for (const candidate of [...parsed.candidates, ...(existing?.candidates || [])]) {
+    if (isExpiredCandidate(candidate)) continue;
+
+    const key = tokenKey(candidate.token);
+    const current = byToken.get(key);
+
+    if (!current || (candidate.score || 0) >= (current.score || 0)) {
+      byToken.set(key, candidate);
+    }
+  }
+
+  return saveTokenAudit({
+    candidates: [...byToken.values()].slice(0, 50),
+    capturedAt: parsed.capturedAt || existing?.capturedAt || new Date().toISOString(),
+    envId: parsed.envId || existing?.envId,
+    flowId: parsed.flowId || existing?.flowId,
+    portalUrl: parsed.portalUrl || existing?.portalUrl,
+    source: parsed.source || existing?.source || 'token-audit-merge',
+  });
+};

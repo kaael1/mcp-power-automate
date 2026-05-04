@@ -103,7 +103,14 @@ const removeStorage = (keys: string[]) =>
 
 const getTab = (tabId: number) =>
   new Promise<chrome.tabs.Tab | null>((resolve) => {
-    chrome.tabs.get(tabId, (tab) => resolve(tab || null));
+    chrome.tabs.get(tabId, (tab) => {
+      if (chrome.runtime.lastError) {
+        resolve(null);
+        return;
+      }
+
+      resolve(tab || null);
+    });
   });
 
 const queryTabs = (queryInfo: chrome.tabs.QueryInfo) =>
@@ -763,6 +770,48 @@ const handleApiRequest = async (
   }
 };
 
+const handleAuxiliaryAudienceRequest = async (details: ApiRequestDetails) => {
+  if (details.tabId < 0) return;
+
+  const token = extractAuthorization(details.requestHeaders);
+  if (!token) return;
+
+  const payload = decodeJwtPayload(token.replace(/^Bearer\s+/i, ''));
+  if (!payload?.aud) return;
+
+  const tabState = getTabState(details.tabId);
+  await hydrateTabFromPortalUrl(details.tabId, tabState);
+
+  const tokenScore = scoreToken(token);
+  const scope = payload.scp || payload.roles?.join(' ') || tokenScore.scopeText;
+  const normalizedScope = scope.toLowerCase();
+  const host = new URL(details.url).host;
+  const audit: TokenAudit = {
+    candidates: [
+      {
+        aud: payload.aud,
+        exp: payload.exp ?? null,
+        hasFlowRead: normalizedScope.includes('powerautomate.flow.read'),
+        hasFlowWrite: normalizedScope.includes('powerautomate.flow.write'),
+        score: tokenScore.score,
+        scope,
+        source: `webRequest:${host}`,
+        token,
+      },
+    ],
+    capturedAt: new Date().toISOString(),
+    envId: tabState.envId,
+    flowId: tabState.flowId,
+    portalUrl: tabState.portalUrl || details.url,
+    source: 'webRequest-auxiliary',
+  };
+
+  await postTokenAuditToBridge(audit);
+  await setStorage({
+    [STORAGE_KEYS.tokenAudit]: audit,
+  });
+};
+
 chrome.tabs.onRemoved.addListener((tabId) => {
   delete state.tabs[tabId];
   delete state.lastSentSignatures[tabId];
@@ -807,6 +856,16 @@ chrome.webRequest.onBeforeSendHeaders.addListener(
   },
   {
     urls: ['https://*.api.flow.microsoft.com/*', 'https://*.api.powerplatform.com/*'],
+  },
+  ['requestHeaders', 'extraHeaders'],
+);
+
+chrome.webRequest.onBeforeSendHeaders.addListener(
+  (details) => {
+    void handleAuxiliaryAudienceRequest(details).catch(() => undefined);
+  },
+  {
+    urls: ['https://api.bap.microsoft.com/*', 'https://*.dynamics.com/*'],
   },
   ['requestHeaders', 'extraHeaders'],
 );

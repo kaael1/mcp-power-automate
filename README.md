@@ -63,12 +63,17 @@ Ask your MCP client to:
 
 For run inspection and manual/request trigger tests, use `list_runs`, `get_latest_run`, `get_run`, `get_run_actions`, `wait_for_run`, `get_trigger_callback_url`, and `invoke_trigger`.
 
+For Dataverse solution inspection, use `list_solutions`, `list_solution_components`, and `list_environment_variables`. These tools are read-only in this release.
+
 ## Public v1 Tools
 
 - `get_context`
 - `doctor`
 - `connect_flow`
 - `list_flows`
+- `list_solutions`
+- `list_solution_components`
+- `list_environment_variables`
 - `get_flow`
 - `preview_flow_update`
 - `validate_flow`
@@ -84,6 +89,18 @@ For run inspection and manual/request trigger tests, use `list_runs`, `get_lates
 - `invoke_trigger`
 - `create_flow`
 - `clone_flow`
+
+## Solutions And Environment Variables
+
+The extension can capture Power Platform/BAP and Dataverse-audience tokens from the logged-in browser session. When those tokens are present, `get_context` and `/health` expose `canManageSolutions` and the MCP can inspect Dataverse solutions for the current or provided environment.
+
+The first solution-oriented surface is intentionally read-only:
+
+- `list_solutions` lists visible unmanaged solutions by default.
+- `list_solution_components` lists components for a solution unique name, with optional enrichment for cloud flows and environment variables.
+- `list_environment_variables` lists environment variable definitions and current values, optionally scoped to one solution.
+
+Write operations such as creating solutions, setting environment variable values, publishing customizations, deleting components, or deleting flows are not exposed in this phase.
 
 ## HTTP Bridge
 
