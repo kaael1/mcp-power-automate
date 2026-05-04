@@ -232,6 +232,37 @@ export const listFlowsInputSchema = z.object({
   query: z.string().trim().min(1).optional(),
 });
 
+export const dataverseOrgRecordSchema = z.object({
+  envId: envIdSchema,
+  instanceApiUrl: baseUrlSchema,
+  instanceUrl: baseUrlSchema,
+  resolvedAt: z.string().trim().min(1, 'resolvedAt is required'),
+  uniqueName: z.string().trim().min(1).optional(),
+});
+
+export const dataverseOrgMapSchema = z.object({
+  records: z.record(envIdSchema, dataverseOrgRecordSchema),
+});
+
+export const dataverseUniqueNameSchema = z.string().trim().min(1, 'unique name is required');
+
+export const listSolutionsInputSchema = z.object({
+  envId: envIdSchema.optional(),
+  includeManaged: z.boolean().optional(),
+  query: z.string().trim().min(1).optional(),
+});
+
+export const listSolutionComponentsInputSchema = z.object({
+  enrich: z.boolean().optional(),
+  envId: envIdSchema.optional(),
+  solutionUniqueName: dataverseUniqueNameSchema,
+});
+
+export const listEnvironmentVariablesInputSchema = z.object({
+  envId: envIdSchema.optional(),
+  solutionUniqueName: dataverseUniqueNameSchema.optional(),
+});
+
 export const setActiveFlowInputSchema = z.object({
   flowId: flowIdSchema,
 });
@@ -309,6 +340,11 @@ export type RunSummary = z.infer<typeof runSummarySchema>;
 export type LastRun = z.infer<typeof lastRunSchema>;
 export type ListRunsInput = z.infer<typeof listRunsInputSchema>;
 export type ListFlowsInput = z.infer<typeof listFlowsInputSchema>;
+export type DataverseOrgRecord = z.infer<typeof dataverseOrgRecordSchema>;
+export type DataverseOrgMap = z.infer<typeof dataverseOrgMapSchema>;
+export type ListSolutionsInput = z.infer<typeof listSolutionsInputSchema>;
+export type ListSolutionComponentsInput = z.infer<typeof listSolutionComponentsInputSchema>;
+export type ListEnvironmentVariablesInput = z.infer<typeof listEnvironmentVariablesInputSchema>;
 export type SetActiveFlowInput = z.infer<typeof setActiveFlowInputSchema>;
 export type OptionalTargetInput = z.infer<typeof optionalTargetInputSchema>;
 export type SelectWorkTabInput = z.infer<typeof selectWorkTabInputSchema>;

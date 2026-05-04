@@ -21,14 +21,18 @@ import {
   validateCurrentFlow,
   waitForRun,
 } from './power-automate-client.js';
+import { listEnvironmentVariables, listSolutionComponents, listSolutions } from './dataverse-solutions.js';
 import {
   cloneFlowInputSchema,
   connectFlowInputSchema,
   createFlowInputSchema,
   getRunInputSchema,
   invokeTriggerInputSchema,
+  listEnvironmentVariablesInputSchema,
   listFlowsInputSchema,
   listRunsInputSchema,
+  listSolutionComponentsInputSchema,
+  listSolutionsInputSchema,
   optionalTargetInputSchema,
   triggerCallbackInputSchema,
   updateFlowInputSchema,
@@ -92,6 +96,27 @@ export const commandDefinitions: CommandDefinition[] = [
     handler: (input) => listFlows(input),
     inputSchema: listFlowsInputSchema,
     name: 'list_flows',
+    risk: 'read',
+  }),
+  createCommand({
+    description: 'List visible Dataverse solutions in the current or provided environment without changing them.',
+    handler: (input) => listSolutions(input),
+    inputSchema: listSolutionsInputSchema,
+    name: 'list_solutions',
+    risk: 'read',
+  }),
+  createCommand({
+    description: 'List Dataverse solution components for a solution unique name without changing them.',
+    handler: (input) => listSolutionComponents(input),
+    inputSchema: listSolutionComponentsInputSchema,
+    name: 'list_solution_components',
+    risk: 'read',
+  }),
+  createCommand({
+    description: 'List Dataverse environment variable definitions and current values without changing them.',
+    handler: (input) => listEnvironmentVariables(input),
+    inputSchema: listEnvironmentVariablesInputSchema,
+    name: 'list_environment_variables',
     risk: 'read',
   }),
   createCommand({

@@ -3,7 +3,9 @@ import type { ActiveTarget, CaptureDiagnostic, FlowSnapshot, LastRun, LastUpdate
 export type BridgeMode = 'owned' | 'reused';
 export type CapabilityReasonCode =
   | 'AUTHENTICATION_FAILED'
+  | 'BAP_TOKEN_MISSING'
   | 'CONNECTION_AUTHORIZATION_FAILED'
+  | 'DATAVERSE_TOKEN_MISSING'
   | 'LEGACY_TOKEN_MISSING'
   | 'NO_SESSION'
   | 'NO_TARGET'
@@ -21,6 +23,7 @@ export interface CapabilityStatus {
 }
 
 export interface PowerAutomateCapabilities {
+  canManageSolutions: CapabilityStatus;
   canReadFlow: CapabilityStatus;
   canReadFlows: CapabilityStatus;
   canReadRuns: CapabilityStatus;
@@ -99,6 +102,7 @@ export interface HealthPayload {
   blockedReason: CapabilityStatus | null;
   capturedAt: string | null;
   bridgeMode: BridgeMode;
+  canManageSolutions: CapabilityStatus;
   currentTabFlowId: string | null;
   envId: string | null;
   hasLegacyApi: boolean;

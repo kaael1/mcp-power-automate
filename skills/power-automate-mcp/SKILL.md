@@ -35,6 +35,17 @@ Provider notes live in [references/providers.md](references/providers.md).
 5. `list_runs` or `get_latest_run` if run history matters
 6. `get_run_actions` when a run needs action-level triage
 
+### Solution Inspection
+
+Use only for read-only Dataverse/Solutions inspection.
+
+1. `doctor`
+2. `get_context`
+3. Confirm `canManageSolutions.available` is true, or follow its reason before retrying.
+4. `list_solutions`
+5. `list_solution_components` when a specific solution needs component inventory.
+6. `list_environment_variables` when environment variable definitions or current values matter.
+
 ### Safe Edit
 
 1. `doctor`
@@ -64,6 +75,9 @@ Use only when the trigger is manual/request based and the payload is safe.
 - `doctor`
 - `connect_flow`
 - `list_flows`
+- `list_solutions`
+- `list_solution_components`
+- `list_environment_variables`
 - `get_flow`
 - `preview_flow_update`
 - `validate_flow`
@@ -84,6 +98,8 @@ Use only when the trigger is manual/request based and the payload is safe.
 
 - `LEGACY_TOKEN_MISSING`: deeper flow-service operations need a compatible browser token. Focus or reopen a real flow page so the extension can capture it automatically.
 - `AUTHENTICATION_FAILED`: the captured token was rejected for that endpoint. Reopen or focus the flow page and retry after capture.
+- `BAP_TOKEN_MISSING`: solution inspection needs a Power Platform/BAP token. Open make.powerapps.com or make.powerautomate.com in the target environment with the extension enabled.
+- `DATAVERSE_TOKEN_MISSING`: solution inspection needs a token for the Dataverse org. Open the Dataverse org or a model-driven app in that environment with the extension enabled.
 - `SCHEMA_VALIDATION_FAILED`: fix the candidate flow JSON. If details include a rejected member such as `retryPolicy`, remove or relocate that field intentionally.
 - `CONNECTION_AUTHORIZATION_FAILED`: stop retrying saves. The user must fix the named connector or connection permissions in Power Automate.
 - `FLOW_NOT_FOUND`: call `list_flows` and `connect_flow`; browser-captured flows may still be usable even when the live catalog is stale.
@@ -98,3 +114,5 @@ Use only when the trigger is manual/request based and the payload is safe.
 ## Production Warning
 
 This MCP can perform real edits. Keep production work supervised, review diffs after save, and use staging flows whenever possible.
+
+Solution tools are read-only in this release. Do not invent or simulate write operations such as creating solutions, setting environment variable values, publishing customizations, deleting solution components, or deleting flows.

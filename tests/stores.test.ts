@@ -180,4 +180,86 @@ describe('stores', () => {
     });
     expect(capturedSessionsStore.listCapturedSessions().map((session) => session.tabId)).toEqual([202, 101]);
   });
+
+  it('merges token audits across audiences, drops expired candidates, and preserves context metadata', async () => {
+    const tokenAuditStore = await import('../server/token-audit-store.js');
+    const nowSeconds = Math.floor(Date.now() / 1000);
+
+    await tokenAuditStore.saveTokenAudit({
+      candidates: [
+        {
+          aud: 'https://api.bap.microsoft.com',
+          exp: nowSeconds + 3600,
+          score: 100,
+          source: 'existing-bap',
+          token: 'Bearer shared-token',
+        },
+        {
+          aud: 'https://expired.crm.dynamics.com',
+          exp: nowSeconds - 60,
+          source: 'expired',
+          token: 'expired-token',
+        },
+      ],
+      capturedAt: '2026-04-01T00:00:00.000Z',
+      envId: 'Default-123',
+      flowId: 'flow-a',
+      portalUrl: 'https://make.powerautomate.com/environments/Default-123/flows/flow-a/details',
+      source: 'existing',
+    });
+
+    const merged = await tokenAuditStore.mergeTokenAudit({
+      candidates: [
+        {
+          aud: 'https://org.crm.dynamics.com',
+          exp: nowSeconds + 3600,
+          score: 75,
+          source: 'incoming-dataverse',
+          token: 'dataverse-token',
+        },
+        {
+          aud: 'https://api.bap.microsoft.com',
+          exp: nowSeconds + 3600,
+          score: 50,
+          source: 'incoming-bap',
+          token: 'shared-token',
+        },
+      ],
+      capturedAt: '2026-04-01T00:05:00.000Z',
+      source: 'incoming',
+    });
+
+    expect(merged.envId).toBe('Default-123');
+    expect(merged.flowId).toBe('flow-a');
+    expect(merged.candidates.map((candidate) => candidate.token)).toEqual(['dataverse-token', 'Bearer shared-token']);
+    expect(merged.candidates.find((candidate) => candidate.token === 'expired-token')).toBeUndefined();
+  });
+
+  it('persists Dataverse organization records by environment', async () => {
+    const orgStore = await import('../server/dataverse-org-store.js');
+
+    await orgStore.saveDataverseOrgRecord({
+      envId: 'Default-123',
+      instanceApiUrl: 'https://org.api.crm.dynamics.com',
+      instanceUrl: 'https://org.crm.dynamics.com',
+      resolvedAt: '2026-04-01T00:00:00.000Z',
+      uniqueName: 'org',
+    });
+
+    const persisted = JSON.parse(await readFile(path.join(tempDir, 'dataverse-org-map.json'), 'utf8'));
+    expect(persisted).toMatchObject({
+      data: {
+        records: {
+          'Default-123': {
+            instanceUrl: 'https://org.crm.dynamics.com',
+            uniqueName: 'org',
+          },
+        },
+      },
+      version: 1,
+    });
+
+    await orgStore.loadDataverseOrgMap();
+    expect(orgStore.getDataverseOrgRecord('Default-123')?.instanceApiUrl).toBe('https://org.api.crm.dynamics.com');
+  });
 });

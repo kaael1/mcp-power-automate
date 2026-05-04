@@ -20,6 +20,7 @@ import {
 } from './client-helpers.js';
 import { getLatestCaptureDiagnostic, getLatestCaptureDiagnosticForFlow } from './capture-diagnostics-store.js';
 import { getCapturedSession, listCapturedSessions } from './captured-sessions-store.js';
+import { hasManageSolutionsTokens } from './dataverse-client.js';
 import { getFlowCatalogForEnv, saveFlowCatalog } from './flow-catalog-store.js';
 import { getFlowSnapshot, getFlowSnapshotForFlow } from './flow-snapshot-store.js';
 import { getLastRun, getLastRunForFlow, saveLastRun } from './last-run-store.js';
@@ -1321,6 +1322,19 @@ const createCapabilityStatus = ({
   reasonCode: available ? null : (reasonCode ?? null),
 });
 
+const getManageSolutionsReason = (reasonCode: CapabilityReasonCode | null, noSessionReason: string) => {
+  switch (reasonCode) {
+    case 'BAP_TOKEN_MISSING':
+      return 'Open make.powerapps.com or make.powerautomate.com in the target environment so the extension can capture a Power Platform/BAP token.';
+    case 'DATAVERSE_TOKEN_MISSING':
+      return 'Open the Dataverse organization or a model-driven app for the environment so the extension can capture a Dataverse token.';
+    case 'NO_SESSION':
+      return noSessionReason;
+    default:
+      return 'Solutions read-only tools are not ready for the current environment.';
+  }
+};
+
 export const getLastRunSummary = (): LastRun | null => {
   const session = getSession();
 
@@ -1360,9 +1374,21 @@ export const getContext = ({ bridgeMode = 'owned' }: { bridgeMode?: BridgeMode }
     : 'Open or focus a Power Automate flow so the extension can capture a session.';
   const noSessionCode: CapabilityReasonCode = hasStoreCorruption ? 'STORE_CORRUPTED' : 'NO_SESSION';
   const noTargetReason = 'Select a flow or sync the current browser tab before running target-specific actions.';
+  const manageSolutionsTokens = hasManageSolutionsTokens(session?.envId || resolvedTarget?.envId || null);
+  const manageSolutionsReasonCode =
+    manageSolutionsTokens.reasonCode === 'NO_SESSION' ? noSessionCode : manageSolutionsTokens.reasonCode;
 
   return {
     capabilities: {
+      canManageSolutions: createCapabilityStatus(
+        manageSolutionsTokens.available ?
+          { available: true }
+        : {
+            available: false,
+            reason: getManageSolutionsReason(manageSolutionsTokens.reasonCode, noSessionReason),
+            reasonCode: manageSolutionsReasonCode,
+          },
+      ),
       canReadFlow: createCapabilityStatus(
         session && resolvedTarget ?
           { available: true }

@@ -14,6 +14,7 @@
     "*://*.make.powerapps.com/*",
     "*://*.api.flow.microsoft.com/*",
     "*://*.api.powerplatform.com/*",
+    "*://api.bap.microsoft.com/*",
     "http://127.0.0.1:17373/*"
   ],
   "background": {

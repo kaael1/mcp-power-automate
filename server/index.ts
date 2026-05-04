@@ -23,6 +23,7 @@ import type {
 import { getActiveTarget, loadActiveTarget, saveActiveTarget } from './active-target-store.js';
 import { getLatestCaptureDiagnostic, getLatestCaptureDiagnosticForFlow, loadCaptureDiagnostics, saveCaptureDiagnostic } from './capture-diagnostics-store.js';
 import { listCapturedSessions, loadCapturedSessions, removeCapturedSession, upsertCapturedSession } from './captured-sessions-store.js';
+import { loadDataverseOrgMap } from './dataverse-org-store.js';
 import { loadFlowCatalog } from './flow-catalog-store.js';
 import { getFlowSnapshot, getFlowSnapshotForFlow, loadFlowSnapshot, saveFlowSnapshot } from './flow-snapshot-store.js';
 import {
@@ -45,7 +46,7 @@ import { getPackageRoot } from './runtime-paths.js';
 import { bridgeHost, bridgePort, capturedSessionSchema, captureDiagnosticSchema, flowIdSchema, flowSnapshotSchema, selectWorkTabInputSchema, sessionSchema, tokenAuditSchema } from './schemas.js';
 import { getSession, loadSession, saveSession } from './session-store.js';
 import { clearSelectedWorkTab, getSelectedWorkTab, loadSelectedWorkTab, saveSelectedWorkTab } from './selected-work-tab-store.js';
-import { getTokenAudit, loadTokenAudit, saveTokenAudit } from './token-audit-store.js';
+import { getTokenAudit, loadTokenAudit, mergeTokenAudit } from './token-audit-store.js';
 import { hasLegacyCompatibleToken } from './token-compat.js';
 import { createMcpApp } from './tools.js';
 import { getBridgeRuntimeInfo, setBridgeMode } from './runtime-state.js';
@@ -152,6 +153,7 @@ export const createHealthPayload = (): HealthPayload => {
     blockedReason,
     capturedAt: session?.capturedAt || null,
     bridgeMode: ownsBridgeServer ? 'owned' : 'reused',
+    canManageSolutions: context.capabilities.canManageSolutions,
     currentTabFlowId: session?.flowId || null,
     envId: session?.envId || activeTarget?.envId || null,
     hasLegacyApi: hasLegacyCompatibleAccess(session),
@@ -341,7 +343,7 @@ export const createBridgeServer = () =>
       if (request.method === 'POST' && normalizedPath === '/token-audit') {
         const body = await readJsonBody(request);
         const audit = tokenAuditSchema.parse(body);
-        const savedAudit = await saveTokenAudit(audit);
+        const savedAudit = await mergeTokenAudit(audit);
         sendJson(response, 200, {
           candidateCount: savedAudit.candidates.length,
           capturedAt: savedAudit.capturedAt,
@@ -515,6 +517,7 @@ const loadLocalState = async () => {
   await loadFlowSnapshot();
   await loadLastRun();
   await loadTokenAudit();
+  await loadDataverseOrgMap();
   await loadCaptureDiagnostics();
   await loadLastUpdate();
 };
