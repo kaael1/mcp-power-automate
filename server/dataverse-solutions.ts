@@ -1,6 +1,11 @@
 import { getSession } from './session-store.js';
 import { PowerAutomateError } from './errors.js';
-import { type DataverseInstance, requestDataverse, resolveInstanceUrl } from './dataverse-client.js';
+import {
+  type DataverseInstance,
+  requestDataverse,
+  requestDataverseCollection,
+  resolveInstanceUrl,
+} from './dataverse-client.js';
 import type { ListEnvironmentVariablesInput, ListSolutionComponentsInput, ListSolutionsInput } from './schemas.js';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -113,9 +118,8 @@ export const listSolutions = async ({ envId, includeManaged, query }: ListSoluti
   if (!includeManaged) filters.push('ismanaged eq false');
   if (query) filters.push(`contains(friendlyname,'${escapeOdataLiteral(query)}')`);
 
-  const result = await requestDataverse<{ value: SolutionRow[] }>({
+  const result = await requestDataverseCollection<SolutionRow>({
     instance,
-    method: 'GET',
     path: 'solutions',
     query: {
       $expand: 'publisherid($select=publisherid,uniquename,friendlyname)',
@@ -128,7 +132,7 @@ export const listSolutions = async ({ envId, includeManaged, query }: ListSoluti
   return {
     envId: instance.envId,
     source: 'dataverse',
-    solutions: (result.body?.value || []).map(summarizeSolution),
+    solutions: result.value.map(summarizeSolution),
   };
 };
 
@@ -195,9 +199,8 @@ const enrichComponents = async (instance: DataverseInstance, components: Solutio
   const enriched = new Map<string, AnyRecord>();
 
   for (const chunk of chunkArray(byType.get(29) || [], ID_BATCH_SIZE)) {
-    const result = await requestDataverse<{ value: WorkflowRow[] }>({
+    const result = await requestDataverseCollection<WorkflowRow>({
       instance,
-      method: 'GET',
       path: 'workflows',
       query: {
         $filter: buildInFilter('workflowid', chunk),
@@ -205,7 +208,7 @@ const enrichComponents = async (instance: DataverseInstance, components: Solutio
       },
     });
 
-    for (const workflow of result.body?.value || []) {
+    for (const workflow of result.value) {
       enriched.set(workflow.workflowid, {
         category: workflow.category ?? null,
         name: workflow.name,
@@ -216,11 +219,13 @@ const enrichComponents = async (instance: DataverseInstance, components: Solutio
   }
 
   for (const chunk of chunkArray(byType.get(380) || [], ID_BATCH_SIZE)) {
-    const result = await requestDataverse<{
-      value: Array<{ displayname?: string; environmentvariabledefinitionid: string; schemaname: string; type?: number }>;
+    const result = await requestDataverseCollection<{
+      displayname?: string;
+      environmentvariabledefinitionid: string;
+      schemaname: string;
+      type?: number;
     }>({
       instance,
-      method: 'GET',
       path: 'environmentvariabledefinitions',
       query: {
         $filter: buildInFilter('environmentvariabledefinitionid', chunk),
@@ -228,7 +233,7 @@ const enrichComponents = async (instance: DataverseInstance, components: Solutio
       },
     });
 
-    for (const definition of result.body?.value || []) {
+    for (const definition of result.value) {
       enriched.set(definition.environmentvariabledefinitionid, {
         displayName: definition.displayname ?? null,
         schemaName: definition.schemaname,
@@ -252,16 +257,15 @@ export const listSolutionComponents = async ({
 }: ListSolutionComponentsInput) => {
   const instance = await getInstance(envId);
   const solutionId = await findSolutionId(instance, solutionUniqueName);
-  const result = await requestDataverse<{ value: SolutionComponentRow[] }>({
+  const result = await requestDataverseCollection<SolutionComponentRow>({
     instance,
-    method: 'GET',
     path: 'solutioncomponents',
     query: {
       $filter: `_solutionid_value eq ${solutionId}`,
       $select: 'objectid,componenttype',
     },
   });
-  const components = result.body?.value || [];
+  const components = result.value;
 
   return {
     components:
@@ -284,29 +288,27 @@ const listEnvironmentVariableDefinitions = async (instance: DataverseInstance, i
   };
 
   if (!ids) {
-    const result = await requestDataverse<{ value: EnvVarDefinitionRow[] }>({
+    const result = await requestDataverseCollection<EnvVarDefinitionRow>({
       instance,
-      method: 'GET',
       path: 'environmentvariabledefinitions',
       query: commonQuery,
     });
 
-    return result.body?.value || [];
+    return result.value;
   }
 
   const definitions: EnvVarDefinitionRow[] = [];
 
   for (const chunk of chunkArray(ids, ID_BATCH_SIZE)) {
-    const result = await requestDataverse<{ value: EnvVarDefinitionRow[] }>({
+    const result = await requestDataverseCollection<EnvVarDefinitionRow>({
       instance,
-      method: 'GET',
       path: 'environmentvariabledefinitions',
       query: {
         ...commonQuery,
         $filter: buildInFilter('environmentvariabledefinitionid', chunk),
       },
     });
-    definitions.push(...(result.body?.value || []));
+    definitions.push(...result.value);
   }
 
   return definitions;
@@ -324,16 +326,15 @@ export const listEnvironmentVariables = async ({ envId, solutionUniqueName }: Li
   }
 
   const solutionId = await findSolutionId(instance, solutionUniqueName);
-  const componentsResult = await requestDataverse<{ value: SolutionComponentRow[] }>({
+  const componentsResult = await requestDataverseCollection<SolutionComponentRow>({
     instance,
-    method: 'GET',
     path: 'solutioncomponents',
     query: {
       $filter: `_solutionid_value eq ${solutionId} and componenttype eq 380`,
       $select: 'objectid',
     },
   });
-  const definitionIds = (componentsResult.body?.value || []).map((component) => component.objectid);
+  const definitionIds = componentsResult.value.map((component) => component.objectid);
 
   return {
     envId: instance.envId,

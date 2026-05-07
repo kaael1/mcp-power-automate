@@ -10,6 +10,7 @@ type AnyRecord = Record<string, any>;
 
 const BAP_AUDIENCES = new Set(['https://api.bap.microsoft.com', 'https://service.powerapps.com']);
 const POWER_PLATFORM_AUDIENCES = new Set(['https://api.powerplatform.com']);
+const MAX_DATAVERSE_PAGES = 100;
 
 const stripTrailingSlash = (value: string) => value.replace(/\/+$/, '');
 const ensureBearer = (token: string) => (token.startsWith('Bearer ') ? token : `Bearer ${token}`);
@@ -103,6 +104,14 @@ export const pickDataverseToken = (instanceUrl: string): TokenCandidate | null =
   );
 };
 
+const pickAnyDataverseToken = (): TokenCandidate | null =>
+  getTokenAudit()?.candidates.find((candidate) => {
+    if (!isUnexpired(candidate)) return false;
+
+    const audienceHost = parseAudienceHost(candidate.aud);
+    return audienceHost.endsWith('.dynamics.com');
+  }) || null;
+
 export const hasManageSolutionsTokens = (
   envId: string | null,
 ): { available: boolean; reasonCode: CapabilityReasonCode | null } => {
@@ -110,12 +119,21 @@ export const hasManageSolutionsTokens = (
     return { available: false, reasonCode: 'NO_SESSION' };
   }
 
+  const cachedOrg = getDataverseOrgRecord(envId);
+
+  if (cachedOrg) {
+    if (!pickDataverseToken(cachedOrg.instanceUrl)) {
+      return { available: false, reasonCode: 'DATAVERSE_TOKEN_MISSING' };
+    }
+
+    return { available: true, reasonCode: null };
+  }
+
   if (!pickPowerPlatformToken() && !pickBapToken()) {
     return { available: false, reasonCode: 'BAP_TOKEN_MISSING' };
   }
 
-  const cachedOrg = getDataverseOrgRecord(envId);
-  if (cachedOrg && !pickDataverseToken(cachedOrg.instanceUrl)) {
+  if (!pickAnyDataverseToken()) {
     return { available: false, reasonCode: 'DATAVERSE_TOKEN_MISSING' };
   }
 
@@ -280,6 +298,11 @@ export interface DataverseResponse<T = unknown> {
   status: number;
 }
 
+interface DataverseCollectionBody<T> {
+  '@odata.nextLink'?: string;
+  value?: T[];
+}
+
 const buildDataverseUrl = (instance: DataverseInstance, path: string, query?: DataverseRequestInit['query']) => {
   const url = new URL(`${stripTrailingSlash(instance.instanceApiUrl)}/api/data/v9.2/${path.replace(/^\/+/, '')}`);
 
@@ -292,12 +315,42 @@ const buildDataverseUrl = (instance: DataverseInstance, path: string, query?: Da
   return url;
 };
 
-export const requestDataverse = async <T = unknown>({
+const assertDataverseUrlForInstance = (instance: DataverseInstance, url: URL) => {
+  const actualHost = normalizeOrgHost(url.host);
+  const allowedHosts = [safeUrlHost(instance.instanceApiUrl), safeUrlHost(instance.instanceUrl)]
+    .filter((host): host is string => Boolean(host))
+    .map(normalizeOrgHost);
+
+  if (!allowedHosts.includes(actualHost)) {
+    throw new PowerAutomateError({
+      code: 'INVALID_REQUEST',
+      details: {
+        allowedHosts,
+        nextLinkHost: url.host,
+      },
+      message: 'Dataverse paging returned a nextLink for a different organization.',
+      retryable: false,
+    });
+  }
+};
+
+const buildNextLinkUrl = (instance: DataverseInstance, nextLink: string) => {
+  const url = new URL(nextLink, `${stripTrailingSlash(instance.instanceApiUrl)}/api/data/v9.2/`);
+  assertDataverseUrlForInstance(instance, url);
+  return url;
+};
+
+const requestDataverseUrl = async <T = unknown>({
   instance,
   method = 'GET',
-  path,
-  query,
-}: DataverseRequestInit): Promise<DataverseResponse<T>> => {
+  url,
+  label,
+}: {
+  instance: DataverseInstance;
+  label: string;
+  method?: 'GET';
+  url: URL;
+}): Promise<DataverseResponse<T>> => {
   const token = pickDataverseToken(instance.instanceUrl);
 
   if (!token) {
@@ -308,7 +361,7 @@ export const requestDataverse = async <T = unknown>({
     });
   }
 
-  const response = await fetch(buildDataverseUrl(instance, path, query), {
+  const response = await fetch(url, {
     headers: {
       Accept: 'application/json',
       Authorization: ensureBearer(token.token),
@@ -320,7 +373,7 @@ export const requestDataverse = async <T = unknown>({
   const parsedBody = await readResponseBody(response);
 
   if (!response.ok) {
-    throw toDataverseError(response, parsedBody, `Dataverse ${method} ${path}`);
+    throw toDataverseError(response, parsedBody, label);
   }
 
   const responseHeaders: Record<string, string> = {};
@@ -332,5 +385,60 @@ export const requestDataverse = async <T = unknown>({
     body: (parsedBody as T) ?? (null as T),
     headers: responseHeaders,
     status: response.status,
+  };
+};
+
+export const requestDataverse = async <T = unknown>({
+  instance,
+  method = 'GET',
+  path,
+  query,
+}: DataverseRequestInit): Promise<DataverseResponse<T>> =>
+  requestDataverseUrl({
+    instance,
+    label: `Dataverse ${method} ${path}`,
+    method,
+    url: buildDataverseUrl(instance, path, query),
+  });
+
+export const requestDataverseCollection = async <T = unknown>({
+  instance,
+  path,
+  query,
+}: Omit<DataverseRequestInit, 'method'>) => {
+  const firstPage = await requestDataverse<DataverseCollectionBody<T>>({
+    instance,
+    method: 'GET',
+    path,
+    query,
+  });
+  const value = [...(firstPage.body?.value || [])];
+  let nextLink = firstPage.body?.['@odata.nextLink'];
+  let pageCount = 1;
+
+  while (nextLink) {
+    if (pageCount >= MAX_DATAVERSE_PAGES) {
+      throw new PowerAutomateError({
+        code: 'UNKNOWN',
+        message: `Dataverse ${path} returned more than ${MAX_DATAVERSE_PAGES} pages.`,
+        retryable: false,
+      });
+    }
+
+    const page = await requestDataverseUrl<DataverseCollectionBody<T>>({
+      instance,
+      label: `Dataverse GET ${path} next page`,
+      method: 'GET',
+      url: buildNextLinkUrl(instance, nextLink),
+    });
+
+    value.push(...(page.body?.value || []));
+    nextLink = page.body?.['@odata.nextLink'];
+    pageCount += 1;
+  }
+
+  return {
+    pageCount,
+    value,
   };
 };
