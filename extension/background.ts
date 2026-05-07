@@ -22,12 +22,42 @@ const state: BackgroundState = {
 
 const LEGACY_FLOW_BASE_URL = 'https://api.flow.microsoft.com/';
 const CAPTURE_ALARM_NAME = 'pa-mcp-capture-open-tabs';
+const AUXILIARY_AUDIT_THROTTLE_MS = 5 * 60 * 1000;
+const MAX_AUXILIARY_AUDIT_SIGNATURES = 200;
+const auxiliaryAuditSentAtBySignature = new Map<string, number>();
 
 const normalizeAudience = (audience: string | undefined) => (audience || '').replace(/\/+$/, '').toLowerCase();
 
 const isLegacyCompatibleAudience = (audience: string | undefined) =>
   normalizeAudience(audience) === 'https://service.flow.microsoft.com' ||
   normalizeAudience(audience) === 'https://service.powerapps.com';
+
+const compactAuxiliaryAuditCache = (now: number) => {
+  for (const [signature, sentAt] of auxiliaryAuditSentAtBySignature) {
+    if (now - sentAt > AUXILIARY_AUDIT_THROTTLE_MS) {
+      auxiliaryAuditSentAtBySignature.delete(signature);
+    }
+  }
+
+  while (auxiliaryAuditSentAtBySignature.size > MAX_AUXILIARY_AUDIT_SIGNATURES) {
+    const [oldestSignature] = auxiliaryAuditSentAtBySignature.keys();
+    if (!oldestSignature) break;
+    auxiliaryAuditSentAtBySignature.delete(oldestSignature);
+  }
+};
+
+const shouldSendAuxiliaryAudit = (signature: string) => {
+  const now = Date.now();
+  const previousSentAt = auxiliaryAuditSentAtBySignature.get(signature);
+
+  if (previousSentAt && now - previousSentAt < AUXILIARY_AUDIT_THROTTLE_MS) {
+    return false;
+  }
+
+  auxiliaryAuditSentAtBySignature.set(signature, now);
+  compactAuxiliaryAuditCache(now);
+  return true;
+};
 
 const getTabState = (tabId: number) => {
   if (!state.tabs[tabId]) {
@@ -779,6 +809,9 @@ const handleAuxiliaryAudienceRequest = async (details: ApiRequestDetails) => {
   const payload = decodeJwtPayload(token.replace(/^Bearer\s+/i, ''));
   if (!payload?.aud) return;
 
+  const auditSignature = `${payload.aud}|${payload.exp ?? ''}|${token.replace(/^Bearer\s+/i, '')}`;
+  if (!shouldSendAuxiliaryAudit(auditSignature)) return;
+
   const tabState = getTabState(details.tabId);
   await hydrateTabFromPortalUrl(details.tabId, tabState);
 
@@ -806,10 +839,15 @@ const handleAuxiliaryAudienceRequest = async (details: ApiRequestDetails) => {
     source: 'webRequest-auxiliary',
   };
 
-  await postTokenAuditToBridge(audit);
-  await setStorage({
-    [STORAGE_KEYS.tokenAudit]: audit,
-  });
+  try {
+    await postTokenAuditToBridge(audit);
+    await setStorage({
+      [STORAGE_KEYS.tokenAudit]: audit,
+    });
+  } catch (error) {
+    auxiliaryAuditSentAtBySignature.delete(auditSignature);
+    throw error;
+  }
 };
 
 chrome.tabs.onRemoved.addListener((tabId) => {

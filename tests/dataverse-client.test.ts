@@ -46,7 +46,6 @@ describe('dataverse client', () => {
   it('reports solution capability from accumulated BAP and Dataverse tokens', async () => {
     const sessionStore = await import('../server/session-store.js');
     const tokenAuditStore = await import('../server/token-audit-store.js');
-    const orgStore = await import('../server/dataverse-org-store.js');
     const dataverseClient = await import('../server/dataverse-client.js');
     const exp = Math.floor(Date.now() / 1000) + 3600;
 
@@ -70,12 +69,6 @@ describe('dataverse client', () => {
     });
 
     expect(dataverseClient.hasManageSolutionsTokens('Default-123')).toMatchObject({
-      available: true,
-      reasonCode: null,
-    });
-
-    await orgStore.saveDataverseOrgRecord(cachedOrg);
-    expect(dataverseClient.hasManageSolutionsTokens('Default-123')).toMatchObject({
       available: false,
       reasonCode: 'DATAVERSE_TOKEN_MISSING',
     });
@@ -90,6 +83,32 @@ describe('dataverse client', () => {
         },
       ],
       capturedAt: '2026-04-01T00:01:00.000Z',
+      source: 'test',
+    });
+
+    expect(dataverseClient.hasManageSolutionsTokens('Default-123')).toMatchObject({
+      available: true,
+      reasonCode: null,
+    });
+  });
+
+  it('reports solution capability from cached Dataverse org without requiring BAP again', async () => {
+    const tokenAuditStore = await import('../server/token-audit-store.js');
+    const orgStore = await import('../server/dataverse-org-store.js');
+    const dataverseClient = await import('../server/dataverse-client.js');
+    const exp = Math.floor(Date.now() / 1000) + 3600;
+
+    await orgStore.saveDataverseOrgRecord(cachedOrg);
+    await tokenAuditStore.saveTokenAudit({
+      candidates: [
+        {
+          aud: 'https://org.crm.dynamics.com',
+          exp,
+          source: 'test',
+          token: 'dataverse-token',
+        },
+      ],
+      capturedAt: '2026-04-01T00:00:00.000Z',
       source: 'test',
     });
 
@@ -154,5 +173,67 @@ describe('dataverse client', () => {
       },
       uniqueName: 'Core',
     });
+  });
+
+  it('follows Dataverse nextLink when listing solutions', async () => {
+    const tokenAuditStore = await import('../server/token-audit-store.js');
+    const orgStore = await import('../server/dataverse-org-store.js');
+    const solutions = await import('../server/dataverse-solutions.js');
+    const exp = Math.floor(Date.now() / 1000) + 3600;
+    const nextLink =
+      'https://org.api.crm.dynamics.com/api/data/v9.2/solutions?$skiptoken=%3Ccookie%20page%3D%222%22%20%2F%3E';
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        createJsonResponse({
+          '@odata.nextLink': nextLink,
+          value: [
+            {
+              friendlyname: 'Core',
+              ismanaged: false,
+              isvisible: true,
+              solutionid: 'solution-id-1',
+              uniquename: 'Core',
+              version: '1.0.0.0',
+            },
+          ],
+        }),
+      )
+      .mockResolvedValueOnce(
+        createJsonResponse({
+          value: [
+            {
+              friendlyname: 'Ops',
+              ismanaged: false,
+              isvisible: true,
+              solutionid: 'solution-id-2',
+              uniquename: 'Ops',
+              version: '2.0.0.0',
+            },
+          ],
+        }),
+      );
+
+    await orgStore.saveDataverseOrgRecord(cachedOrg);
+    await tokenAuditStore.saveTokenAudit({
+      candidates: [
+        {
+          aud: 'https://org.crm.dynamics.com',
+          exp,
+          source: 'test',
+          token: 'dataverse-token',
+        },
+      ],
+      capturedAt: '2026-04-01T00:00:00.000Z',
+      source: 'test',
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const result = await solutions.listSolutions({ envId: 'Default-123' });
+    const [secondUrl] = fetchMock.mock.calls[1] as unknown as [URL, RequestInit];
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(secondUrl.toString()).toBe(nextLink);
+    expect(result.solutions.map((solution) => solution.uniqueName)).toEqual(['Core', 'Ops']);
   });
 });
