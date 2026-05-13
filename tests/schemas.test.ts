@@ -1,6 +1,12 @@
 import { describe, expect, it } from 'vitest';
 
-import { flowCatalogItemSchema, sessionSchema, waitForRunInputSchema } from '../server/schemas.js';
+import {
+  addFlowToSolutionInputSchema,
+  createFlowInSolutionInputSchema,
+  flowCatalogItemSchema,
+  sessionSchema,
+  waitForRunInputSchema,
+} from '../server/schemas.js';
 
 describe('schemas', () => {
   it('parses a valid session payload', () => {
@@ -34,6 +40,31 @@ describe('schemas', () => {
     expect(waitForRunInputSchema.parse({ pollIntervalSeconds: 5, timeoutSeconds: 30 })).toEqual({
       pollIntervalSeconds: 5,
       timeoutSeconds: 30,
+    });
+  });
+
+  it('parses solution flow write inputs', () => {
+    expect(
+      addFlowToSolutionInputSchema.parse({
+        flowId: 'flow-id',
+        solutionUniqueName: 'Core',
+      }),
+    ).toEqual({
+      flowId: 'flow-id',
+      solutionUniqueName: 'Core',
+    });
+    expect(
+      createFlowInSolutionInputSchema.parse({
+        displayName: 'New Flow',
+        envId: 'Default-123',
+        solutionUniqueName: 'Core',
+        triggerType: 'request',
+      }),
+    ).toMatchObject({
+      displayName: 'New Flow',
+      envId: 'Default-123',
+      solutionUniqueName: 'Core',
+      triggerType: 'request',
     });
   });
 });

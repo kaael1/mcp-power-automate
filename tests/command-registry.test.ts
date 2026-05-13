@@ -13,6 +13,7 @@ const expectedV1Commands = [
   'list_solutions',
   'list_solution_components',
   'list_environment_variables',
+  'add_flow_to_solution',
   'get_flow',
   'preview_flow_update',
   'validate_flow',
@@ -27,6 +28,7 @@ const expectedV1Commands = [
   'get_trigger_callback_url',
   'invoke_trigger',
   'create_flow',
+  'create_flow_in_solution',
   'clone_flow',
 ];
 

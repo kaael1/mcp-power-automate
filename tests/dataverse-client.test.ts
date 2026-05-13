@@ -12,6 +12,12 @@ const createJsonResponse = (payload: unknown, status = 200) =>
     status,
   });
 
+const createNoContentResponse = (headers: Record<string, string> = {}) =>
+  new Response(null, {
+    headers,
+    status: 204,
+  });
+
 const baseSession = {
   apiToken: 'Bearer modern-token',
   apiUrl: 'https://example.api.powerplatform.com/',
@@ -235,5 +241,201 @@ describe('dataverse client', () => {
     expect(fetchMock).toHaveBeenCalledTimes(2);
     expect(secondUrl.toString()).toBe(nextLink);
     expect(result.solutions.map((solution) => solution.uniqueName)).toEqual(['Core', 'Ops']);
+  });
+
+  it('adds an existing flow to an unmanaged solution through AddSolutionComponent', async () => {
+    const tokenAuditStore = await import('../server/token-audit-store.js');
+    const orgStore = await import('../server/dataverse-org-store.js');
+    const solutions = await import('../server/dataverse-solutions.js');
+    const exp = Math.floor(Date.now() / 1000) + 3600;
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        createJsonResponse({
+          value: [
+            {
+              friendlyname: 'Core',
+              ismanaged: false,
+              solutionid: 'solution-id',
+              uniquename: 'Core',
+            },
+          ],
+        }),
+      )
+      .mockResolvedValueOnce(createJsonResponse({ SolutionComponentId: 'component-id' }));
+
+    await orgStore.saveDataverseOrgRecord(cachedOrg);
+    await tokenAuditStore.saveTokenAudit({
+      candidates: [
+        {
+          aud: 'https://org.crm.dynamics.com',
+          exp,
+          source: 'test',
+          token: 'dataverse-token',
+        },
+      ],
+      capturedAt: '2026-04-01T00:00:00.000Z',
+      source: 'test',
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const result = await solutions.addFlowToSolution({
+      envId: 'Default-123',
+      flowId: 'flow-id',
+      solutionUniqueName: 'Core',
+    });
+    const [actionUrl, actionInit] = fetchMock.mock.calls[1] as unknown as [string, RequestInit];
+    const actionBody = JSON.parse(actionInit.body as string) as Record<string, unknown>;
+
+    expect(new URL(actionUrl).pathname).toBe('/api/data/v9.2/AddSolutionComponent');
+    expect(actionInit.method).toBe('POST');
+    expect((actionInit.headers as Record<string, string>)['Content-Type']).toBe('application/json');
+    expect(actionBody).toEqual({
+      AddRequiredComponents: false,
+      ComponentId: 'flow-id',
+      ComponentType: 29,
+      SolutionUniqueName: 'Core',
+    });
+    expect(result).toMatchObject({
+      componentTypeName: 'workflow',
+      flowId: 'flow-id',
+      solution: {
+        uniqueName: 'Core',
+      },
+    });
+  });
+
+  it('rejects adding flows to managed solutions before calling AddSolutionComponent', async () => {
+    const tokenAuditStore = await import('../server/token-audit-store.js');
+    const orgStore = await import('../server/dataverse-org-store.js');
+    const solutions = await import('../server/dataverse-solutions.js');
+    const exp = Math.floor(Date.now() / 1000) + 3600;
+    const fetchMock = vi.fn(async () =>
+      createJsonResponse({
+        value: [
+          {
+            friendlyname: 'Managed',
+            ismanaged: true,
+            solutionid: 'solution-id',
+            uniquename: 'Managed',
+          },
+        ],
+      }),
+    );
+
+    await orgStore.saveDataverseOrgRecord(cachedOrg);
+    await tokenAuditStore.saveTokenAudit({
+      candidates: [
+        {
+          aud: 'https://org.crm.dynamics.com',
+          exp,
+          source: 'test',
+          token: 'dataverse-token',
+        },
+      ],
+      capturedAt: '2026-04-01T00:00:00.000Z',
+      source: 'test',
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(
+      solutions.addFlowToSolution({
+        envId: 'Default-123',
+        flowId: 'flow-id',
+        solutionUniqueName: 'Managed',
+      }),
+    ).rejects.toThrow(/managed/i);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('creates a Dataverse cloud flow and adds its workflow id to the solution', async () => {
+    const tokenAuditStore = await import('../server/token-audit-store.js');
+    const orgStore = await import('../server/dataverse-org-store.js');
+    const solutions = await import('../server/dataverse-solutions.js');
+    const exp = Math.floor(Date.now() / 1000) + 3600;
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        createJsonResponse({
+          value: [
+            {
+              friendlyname: 'Core',
+              ismanaged: false,
+              solutionid: 'solution-id',
+              uniquename: 'Core',
+            },
+          ],
+        }),
+      )
+      .mockResolvedValueOnce(
+        createNoContentResponse({
+          'OData-EntityId': 'https://org.api.crm.dynamics.com/api/data/v9.2/workflows(workflow-id)',
+        }),
+      )
+      .mockResolvedValueOnce(
+        createJsonResponse({
+          value: [
+            {
+              friendlyname: 'Core',
+              ismanaged: false,
+              solutionid: 'solution-id',
+              uniquename: 'Core',
+            },
+          ],
+        }),
+      )
+      .mockResolvedValueOnce(createJsonResponse({ id: 'component-id' }));
+
+    await orgStore.saveDataverseOrgRecord(cachedOrg);
+    await tokenAuditStore.saveTokenAudit({
+      candidates: [
+        {
+          aud: 'https://org.crm.dynamics.com',
+          exp,
+          source: 'test',
+          token: 'dataverse-token',
+        },
+      ],
+      capturedAt: '2026-04-01T00:00:00.000Z',
+      source: 'test',
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const result = await solutions.createFlowInSolution({
+      displayName: 'New Flow',
+      envId: 'Default-123',
+      solutionUniqueName: 'Core',
+      triggerType: 'request',
+    });
+    const [, createInit] = fetchMock.mock.calls[1] as unknown as [string, RequestInit];
+    const createBody = JSON.parse(createInit.body as string) as Record<string, unknown>;
+    const [, addInit] = fetchMock.mock.calls[3] as unknown as [string, RequestInit];
+    const addBody = JSON.parse(addInit.body as string) as Record<string, unknown>;
+
+    expect(createBody).toMatchObject({
+      category: 5,
+      name: 'New Flow',
+      primaryentity: 'none',
+      type: 1,
+    });
+    expect(JSON.parse(createBody.clientdata as string)).toMatchObject({
+      properties: {
+        connectionReferences: {},
+      },
+      schemaVersion: '1.0.0.0',
+    });
+    expect(addBody).toMatchObject({
+      AddRequiredComponents: false,
+      ComponentId: 'workflow-id',
+      ComponentType: 29,
+      SolutionUniqueName: 'Core',
+    });
+    expect(result).toMatchObject({
+      displayName: 'New Flow',
+      flowId: 'workflow-id',
+      solutionComponent: {
+        componentTypeName: 'workflow',
+      },
+    });
   });
 });

@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Added `add_flow_to_solution` and `create_flow_in_solution` for placing cloud flows into unmanaged Dataverse solutions.
+
 ## 1.0.0
 
 - Replaced the MCP tool registration with a v1 command registry shared by MCP tools and `/v1/commands/:name` bridge routes.

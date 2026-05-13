@@ -286,8 +286,9 @@ export const resolveInstanceUrl = async (envId: string): Promise<DataverseInstan
 };
 
 export interface DataverseRequestInit {
+  body?: unknown;
   instance: DataverseInstance;
-  method?: 'GET';
+  method?: 'GET' | 'POST';
   path: string;
   query?: Record<string, boolean | number | string | undefined>;
 }
@@ -341,14 +342,16 @@ const buildNextLinkUrl = (instance: DataverseInstance, nextLink: string) => {
 };
 
 const requestDataverseUrl = async <T = unknown>({
+  body,
   instance,
   method = 'GET',
   url,
   label,
 }: {
+  body?: unknown;
   instance: DataverseInstance;
   label: string;
-  method?: 'GET';
+  method?: 'GET' | 'POST';
   url: URL;
 }): Promise<DataverseResponse<T>> => {
   const token = pickDataverseToken(instance.instanceUrl);
@@ -362,9 +365,11 @@ const requestDataverseUrl = async <T = unknown>({
   }
 
   const response = await fetch(url, {
+    body: body === undefined ? undefined : JSON.stringify(body),
     headers: {
       Accept: 'application/json',
       Authorization: ensureBearer(token.token),
+      ...(body === undefined ? {} : { 'Content-Type': 'application/json' }),
       'OData-MaxVersion': '4.0',
       'OData-Version': '4.0',
     },
@@ -389,12 +394,14 @@ const requestDataverseUrl = async <T = unknown>({
 };
 
 export const requestDataverse = async <T = unknown>({
+  body,
   instance,
   method = 'GET',
   path,
   query,
 }: DataverseRequestInit): Promise<DataverseResponse<T>> =>
   requestDataverseUrl({
+    body,
     instance,
     label: `Dataverse ${method} ${path}`,
     method,

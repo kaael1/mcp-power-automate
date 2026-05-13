@@ -280,6 +280,21 @@ export const createFlowInputSchema = z.object({
   triggerType: z.enum(['recurrence', 'request']).optional(),
 });
 
+export const addFlowToSolutionInputSchema = z.object({
+  addRequiredComponents: z.boolean().optional(),
+  doNotIncludeSubcomponents: z.boolean().optional(),
+  envId: envIdSchema.optional(),
+  flowId: flowIdSchema,
+  solutionUniqueName: dataverseUniqueNameSchema,
+});
+
+export const createFlowInSolutionInputSchema = createFlowInputSchema.extend({
+  addRequiredComponents: z.boolean().optional(),
+  doNotIncludeSubcomponents: z.boolean().optional(),
+  envId: envIdSchema.optional(),
+  solutionUniqueName: dataverseUniqueNameSchema,
+});
+
 export const cloneFlowInputSchema = z.object({
   displayName: z.string().trim().min(1).optional(),
   makeActive: z.boolean().optional(),
@@ -349,6 +364,8 @@ export type SetActiveFlowInput = z.infer<typeof setActiveFlowInputSchema>;
 export type OptionalTargetInput = z.infer<typeof optionalTargetInputSchema>;
 export type SelectWorkTabInput = z.infer<typeof selectWorkTabInputSchema>;
 export type CreateFlowInput = z.infer<typeof createFlowInputSchema>;
+export type AddFlowToSolutionInput = z.infer<typeof addFlowToSolutionInputSchema>;
+export type CreateFlowInSolutionInput = z.infer<typeof createFlowInSolutionInputSchema>;
 export type CloneFlowInput = z.infer<typeof cloneFlowInputSchema>;
 export type GetRunInput = z.infer<typeof getRunInputSchema>;
 export type WaitForRunInput = z.infer<typeof waitForRunInputSchema>;

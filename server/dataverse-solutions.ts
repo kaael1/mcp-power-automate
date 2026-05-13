@@ -6,7 +6,13 @@ import {
   requestDataverseCollection,
   resolveInstanceUrl,
 } from './dataverse-client.js';
-import type { ListEnvironmentVariablesInput, ListSolutionComponentsInput, ListSolutionsInput } from './schemas.js';
+import type {
+  AddFlowToSolutionInput,
+  CreateFlowInSolutionInput,
+  ListEnvironmentVariablesInput,
+  ListSolutionComponentsInput,
+  ListSolutionsInput,
+} from './schemas.js';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type AnyRecord = Record<string, any>;
@@ -29,6 +35,7 @@ const ENV_VAR_TYPE_LABELS: Record<number, string> = {
 };
 
 const ID_BATCH_SIZE = 200;
+const FLOW_COMPONENT_TYPE = 29;
 
 const resolveTargetEnvId = (envId?: string) => {
   if (envId) return envId;
@@ -136,14 +143,16 @@ export const listSolutions = async ({ envId, includeManaged, query }: ListSoluti
   };
 };
 
-const findSolutionId = async (instance: DataverseInstance, uniqueName: string) => {
-  const result = await requestDataverse<{ value: Array<{ solutionid: string }> }>({
+const findSolution = async (instance: DataverseInstance, uniqueName: string) => {
+  const result = await requestDataverse<{
+    value: Array<Pick<SolutionRow, 'friendlyname' | 'ismanaged' | 'solutionid' | 'uniquename'>>;
+  }>({
     instance,
     method: 'GET',
     path: 'solutions',
     query: {
       $filter: `uniquename eq '${escapeOdataLiteral(uniqueName)}'`,
-      $select: 'solutionid',
+      $select: 'solutionid,uniquename,friendlyname,ismanaged',
       $top: 1,
     },
   });
@@ -157,7 +166,232 @@ const findSolutionId = async (instance: DataverseInstance, uniqueName: string) =
     });
   }
 
-  return row.solutionid;
+  return row;
+};
+
+const findSolutionId = async (instance: DataverseInstance, uniqueName: string) =>
+  (await findSolution(instance, uniqueName)).solutionid;
+
+const assertUnmanagedSolution = (solution: Pick<SolutionRow, 'ismanaged' | 'solutionid'>, solutionUniqueName: string) => {
+  if (solution.ismanaged) {
+    throw new PowerAutomateError({
+      code: 'INVALID_REQUEST',
+      details: {
+        solutionId: solution.solutionid,
+        solutionUniqueName,
+      },
+      message: `Solution "${solutionUniqueName}" is managed. Add flows only to unmanaged solutions.`,
+      retryable: false,
+    });
+  }
+};
+
+export const prepareFlowSolutionTarget = async ({
+  envId,
+  solutionUniqueName,
+}: Pick<AddFlowToSolutionInput, 'envId' | 'solutionUniqueName'>) => {
+  const instance = await getInstance(envId);
+  const solution = await findSolution(instance, solutionUniqueName);
+  assertUnmanagedSolution(solution, solutionUniqueName);
+
+  return {
+    envId: instance.envId,
+    solution: {
+      friendlyName: solution.friendlyname,
+      isManaged: solution.ismanaged,
+      solutionId: solution.solutionid,
+      uniqueName: solution.uniquename,
+    },
+  };
+};
+
+const buildBlankRequestDefinition = () => ({
+  $schema:
+    'https://schema.management.azure.com/providers/Microsoft.Logic/schemas/2016-06-01/workflowdefinition.json#',
+  actions: {
+    Response: {
+      inputs: {
+        body: {
+          ok: true,
+        },
+        statusCode: 200,
+      },
+      kind: 'Http',
+      metadata: {},
+      runAfter: {},
+      type: 'Response',
+    },
+  },
+  contentVersion: '1.0.0.0',
+  outputs: {},
+  parameters: {
+    $authentication: {
+      defaultValue: {},
+      type: 'SecureObject',
+    },
+    $connections: {
+      defaultValue: {},
+      type: 'Object',
+    },
+  },
+  triggers: {
+    manual: {
+      inputs: {
+        schema: {
+          properties: {},
+          required: [],
+          type: 'object',
+        },
+      },
+      kind: 'Button',
+      metadata: {},
+      type: 'Request',
+    },
+  },
+});
+
+const buildBlankRecurrenceDefinition = () => ({
+  $schema:
+    'https://schema.management.azure.com/providers/Microsoft.Logic/schemas/2016-06-01/workflowdefinition.json#',
+  actions: {
+    Compose: {
+      inputs: 'Scheduled run completed.',
+      metadata: {},
+      runAfter: {},
+      type: 'Compose',
+    },
+  },
+  contentVersion: '1.0.0.0',
+  outputs: {},
+  parameters: {
+    $authentication: {
+      defaultValue: {},
+      type: 'SecureObject',
+    },
+    $connections: {
+      defaultValue: {},
+      type: 'Object',
+    },
+  },
+  triggers: {
+    Recurrence: {
+      metadata: {},
+      recurrence: {
+        frequency: 'Day',
+        interval: 1,
+      },
+      type: 'Recurrence',
+    },
+  },
+});
+
+const extractWorkflowIdFromEntityId = (entityId: string | undefined) => {
+  const match = entityId?.match(/workflows\(([^)]+)\)/i);
+  return match?.[1] || null;
+};
+
+const createWorkflowClientData = (definition: AnyRecord) =>
+  JSON.stringify({
+    properties: {
+      connectionReferences: {},
+      definition,
+    },
+    schemaVersion: '1.0.0.0',
+  });
+
+export const addFlowToSolution = async ({
+  addRequiredComponents = false,
+  envId,
+  flowId,
+  solutionUniqueName,
+}: AddFlowToSolutionInput) => {
+  const instance = await getInstance(envId);
+  const solution = await findSolution(instance, solutionUniqueName);
+  assertUnmanagedSolution(solution, solutionUniqueName);
+
+  const result = await requestDataverse<AnyRecord | null>({
+    body: {
+      AddRequiredComponents: addRequiredComponents,
+      ComponentId: flowId,
+      ComponentType: FLOW_COMPONENT_TYPE,
+      SolutionUniqueName: solutionUniqueName,
+    },
+    instance,
+    method: 'POST',
+    path: 'AddSolutionComponent',
+  });
+
+  return {
+    addRequiredComponents,
+    componentType: FLOW_COMPONENT_TYPE,
+    componentTypeName: COMPONENT_TYPE_NAMES[FLOW_COMPONENT_TYPE],
+    envId: instance.envId,
+    flowId,
+    response: result.body ?? null,
+    solution: {
+      friendlyName: solution.friendlyname,
+      isManaged: solution.ismanaged,
+      solutionId: solution.solutionid,
+      uniqueName: solution.uniquename,
+    },
+    source: 'dataverse',
+  };
+};
+
+export const createFlowInSolution = async ({
+  displayName,
+  envId,
+  solutionUniqueName,
+  triggerType = 'request',
+}: CreateFlowInSolutionInput) => {
+  const target = await prepareFlowSolutionTarget({ envId, solutionUniqueName });
+  const instance = await getInstance(target.envId);
+  const definition =
+    triggerType === 'recurrence' ? buildBlankRecurrenceDefinition() : buildBlankRequestDefinition();
+  const created = await requestDataverse<null>({
+    body: {
+      category: 5,
+      clientdata: createWorkflowClientData(definition),
+      description: 'Created by MCP Power Automate.',
+      name: displayName,
+      primaryentity: 'none',
+      type: 1,
+    },
+    instance,
+    method: 'POST',
+    path: 'workflows',
+  });
+  const flowId = extractWorkflowIdFromEntityId(created.headers['odata-entityid']);
+
+  if (!flowId) {
+    throw new PowerAutomateError({
+      code: 'UNKNOWN',
+      details: {
+        headers: created.headers,
+      },
+      message: 'Dataverse did not return a workflow id for the created cloud flow.',
+      retryable: false,
+    });
+  }
+
+  const solutionComponent = await addFlowToSolution({
+    addRequiredComponents: false,
+    envId: instance.envId,
+    flowId,
+    solutionUniqueName,
+  });
+
+  return {
+    displayName,
+    envId: instance.envId,
+    flow: {
+      connectionReferences: {},
+      definition,
+    },
+    flowId,
+    solutionComponent,
+    source: 'dataverse',
+  };
 };
 
 const chunkArray = <T>(items: T[], size: number) => {
