@@ -27,6 +27,25 @@ This repository contains a local MCP server, a Chromium extension, and a Codex s
 - `skills/power-automate-mcp/`: reusable skill instructions for Codex
 - `data/`: runtime state only
 
+## Local Codex registration
+
+When working from this checkout, prefer registering Codex against the local built server instead of the published `npx` package so local fixes are exercised:
+
+```powershell
+npm run build
+$nodePath = (Get-Command node).Source
+$serverPath = Join-Path (Get-Location) "dist/server/index.js"
+codex mcp add power-automate-local -- $nodePath $serverPath
+```
+
+If an older `power-automate-local` entry already exists, remove it first with:
+
+```powershell
+codex mcp remove power-automate-local
+```
+
+Load the browser extension from `dist/extension` after rebuilding. If the popup says the bridge is offline while `http://127.0.0.1:17373/health` works, check for a version mismatch between the extension bundle and the running bridge.
+
 ## Publishing guidance
 
 - Keep the skill in this same repository unless there is a strong reason to split release cycles.
