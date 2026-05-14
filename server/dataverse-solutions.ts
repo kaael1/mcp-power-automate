@@ -301,6 +301,7 @@ const createWorkflowClientData = (definition: AnyRecord) =>
 
 export const addFlowToSolution = async ({
   addRequiredComponents = false,
+  doNotIncludeSubcomponents,
   envId,
   flowId,
   solutionUniqueName,
@@ -308,14 +309,19 @@ export const addFlowToSolution = async ({
   const instance = await getInstance(envId);
   const solution = await findSolution(instance, solutionUniqueName);
   assertUnmanagedSolution(solution, solutionUniqueName);
+  const body: AnyRecord = {
+    AddRequiredComponents: addRequiredComponents,
+    ComponentId: flowId,
+    ComponentType: FLOW_COMPONENT_TYPE,
+    SolutionUniqueName: solutionUniqueName,
+  };
+
+  if (doNotIncludeSubcomponents !== undefined) {
+    body.DoNotIncludeSubcomponents = doNotIncludeSubcomponents;
+  }
 
   const result = await requestDataverse<AnyRecord | null>({
-    body: {
-      AddRequiredComponents: addRequiredComponents,
-      ComponentId: flowId,
-      ComponentType: FLOW_COMPONENT_TYPE,
-      SolutionUniqueName: solutionUniqueName,
-    },
+    body,
     instance,
     method: 'POST',
     path: 'AddSolutionComponent',
@@ -325,6 +331,7 @@ export const addFlowToSolution = async ({
     addRequiredComponents,
     componentType: FLOW_COMPONENT_TYPE,
     componentTypeName: COMPONENT_TYPE_NAMES[FLOW_COMPONENT_TYPE],
+    doNotIncludeSubcomponents: doNotIncludeSubcomponents ?? null,
     envId: instance.envId,
     flowId,
     response: result.body ?? null,
@@ -339,7 +346,9 @@ export const addFlowToSolution = async ({
 };
 
 export const createFlowInSolution = async ({
+  addRequiredComponents = false,
   displayName,
+  doNotIncludeSubcomponents,
   envId,
   solutionUniqueName,
   triggerType = 'request',
@@ -375,7 +384,8 @@ export const createFlowInSolution = async ({
   }
 
   const solutionComponent = await addFlowToSolution({
-    addRequiredComponents: false,
+    addRequiredComponents,
+    doNotIncludeSubcomponents,
     envId: instance.envId,
     flowId,
     solutionUniqueName,

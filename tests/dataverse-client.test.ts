@@ -280,6 +280,8 @@ describe('dataverse client', () => {
     vi.stubGlobal('fetch', fetchMock);
 
     const result = await solutions.addFlowToSolution({
+      addRequiredComponents: true,
+      doNotIncludeSubcomponents: true,
       envId: 'Default-123',
       flowId: 'flow-id',
       solutionUniqueName: 'Core',
@@ -291,13 +293,16 @@ describe('dataverse client', () => {
     expect(actionInit.method).toBe('POST');
     expect((actionInit.headers as Record<string, string>)['Content-Type']).toBe('application/json');
     expect(actionBody).toEqual({
-      AddRequiredComponents: false,
+      AddRequiredComponents: true,
       ComponentId: 'flow-id',
       ComponentType: 29,
+      DoNotIncludeSubcomponents: true,
       SolutionUniqueName: 'Core',
     });
     expect(result).toMatchObject({
+      addRequiredComponents: true,
       componentTypeName: 'workflow',
+      doNotIncludeSubcomponents: true,
       flowId: 'flow-id',
       solution: {
         uniqueName: 'Core',
@@ -402,7 +407,9 @@ describe('dataverse client', () => {
     vi.stubGlobal('fetch', fetchMock);
 
     const result = await solutions.createFlowInSolution({
+      addRequiredComponents: true,
       displayName: 'New Flow',
+      doNotIncludeSubcomponents: true,
       envId: 'Default-123',
       solutionUniqueName: 'Core',
       triggerType: 'request',
@@ -425,9 +432,10 @@ describe('dataverse client', () => {
       schemaVersion: '1.0.0.0',
     });
     expect(addBody).toMatchObject({
-      AddRequiredComponents: false,
+      AddRequiredComponents: true,
       ComponentId: 'workflow-id',
       ComponentType: 29,
+      DoNotIncludeSubcomponents: true,
       SolutionUniqueName: 'Core',
     });
     expect(result).toMatchObject({
