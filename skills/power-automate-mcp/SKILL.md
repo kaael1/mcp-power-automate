@@ -35,9 +35,9 @@ Provider notes live in [references/providers.md](references/providers.md).
 5. `list_runs` or `get_latest_run` if run history matters
 6. `get_run_actions` when a run needs action-level triage
 
-### Solution Inspection
+### Solution Work
 
-Use only for read-only Dataverse/Solutions inspection.
+Use solution write tools only for unmanaged solutions and only when adding cloud flows is the intended change.
 
 1. `doctor`
 2. `get_context`
@@ -45,6 +45,7 @@ Use only for read-only Dataverse/Solutions inspection.
 4. `list_solutions`
 5. `list_solution_components` when a specific solution needs component inventory.
 6. `list_environment_variables` when environment variable definitions or current values matter.
+7. `add_flow_to_solution` for an existing flow, or `create_flow_in_solution` when a new blank flow should be created and added.
 
 ### Safe Edit
 
@@ -78,6 +79,7 @@ Use only when the trigger is manual/request based and the payload is safe.
 - `list_solutions`
 - `list_solution_components`
 - `list_environment_variables`
+- `add_flow_to_solution`
 - `get_flow`
 - `preview_flow_update`
 - `validate_flow`
@@ -92,6 +94,7 @@ Use only when the trigger is manual/request based and the payload is safe.
 - `get_trigger_callback_url`
 - `invoke_trigger`
 - `create_flow`
+- `create_flow_in_solution`
 - `clone_flow`
 
 ## Error Guidance
@@ -115,4 +118,4 @@ Use only when the trigger is manual/request based and the payload is safe.
 
 This MCP can perform real edits. Keep production work supervised, review diffs after save, and use staging flows whenever possible.
 
-Solution tools are read-only in this release. Do not invent or simulate write operations such as creating solutions, setting environment variable values, publishing customizations, deleting solution components, or deleting flows.
+Solution writes are limited to `add_flow_to_solution` and `create_flow_in_solution` for unmanaged solutions. Do not invent or simulate unsupported write operations such as creating solutions, setting environment variable values, publishing customizations, deleting solution components, or deleting flows.

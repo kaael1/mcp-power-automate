@@ -21,10 +21,18 @@ import {
   validateCurrentFlow,
   waitForRun,
 } from './power-automate-client.js';
-import { listEnvironmentVariables, listSolutionComponents, listSolutions } from './dataverse-solutions.js';
 import {
+  addFlowToSolution,
+  createFlowInSolution as createDataverseFlowInSolution,
+  listEnvironmentVariables,
+  listSolutionComponents,
+  listSolutions,
+} from './dataverse-solutions.js';
+import {
+  addFlowToSolutionInputSchema,
   cloneFlowInputSchema,
   connectFlowInputSchema,
+  createFlowInSolutionInputSchema,
   createFlowInputSchema,
   getRunInputSchema,
   invokeTriggerInputSchema,
@@ -38,7 +46,9 @@ import {
   updateFlowInputSchema,
   validateFlowInputSchema,
   waitForRunInputSchema,
+  editorSchema,
 } from './schemas.js';
+import { saveActiveTarget } from './active-target-store.js';
 import { getBridgeCommandBaseUrl, getBridgeMode, getBridgeRuntimeInfo } from './runtime-state.js';
 import { toErrorPayload } from './errors.js';
 
@@ -63,6 +73,47 @@ const createCommand = <TInputSchema extends ZodTypeAny>(
   ...definition,
   handler: (input: unknown) => definition.handler(input as z.infer<TInputSchema>),
 });
+
+const createFlowInSolution = async ({
+  addRequiredComponents,
+  displayName,
+  doNotIncludeSubcomponents,
+  envId,
+  solutionUniqueName,
+  triggerType,
+}: z.infer<typeof createFlowInSolutionInputSchema>) => {
+  const created = await createDataverseFlowInSolution({
+    addRequiredComponents,
+    displayName,
+    doNotIncludeSubcomponents,
+    envId,
+    solutionUniqueName,
+    triggerType,
+  });
+  const activeTarget = await saveActiveTarget({
+    displayName: created.displayName,
+    envId: created.envId,
+    flowId: created.flowId,
+    selectedAt: new Date().toISOString(),
+    selectionSource: 'create-result',
+  });
+
+  return {
+    activeTarget,
+    flow: {
+      displayName: created.displayName,
+      envId: created.envId,
+      environment: null,
+      flow: {
+        $schema: editorSchema,
+        ...created.flow,
+      },
+      flowId: created.flowId,
+      source: created.source,
+    },
+    solutionComponent: created.solutionComponent,
+  };
+};
 
 export const commandDefinitions: CommandDefinition[] = [
   createCommand({
@@ -118,6 +169,13 @@ export const commandDefinitions: CommandDefinition[] = [
     inputSchema: listEnvironmentVariablesInputSchema,
     name: 'list_environment_variables',
     risk: 'read',
+  }),
+  createCommand({
+    description: 'Add an existing cloud flow to an unmanaged Dataverse solution.',
+    handler: (input) => addFlowToSolution(input),
+    inputSchema: addFlowToSolutionInputSchema,
+    name: 'add_flow_to_solution',
+    risk: 'write',
   }),
   createCommand({
     description: 'Fetch the selected Power Automate flow target and return a normalized editable payload.',
@@ -215,6 +273,13 @@ export const commandDefinitions: CommandDefinition[] = [
     handler: (input) => createFlow(input),
     inputSchema: createFlowInputSchema,
     name: 'create_flow',
+    risk: 'write',
+  }),
+  createCommand({
+    description: 'Create a new blank flow in the current environment, add it to an unmanaged solution, and connect it as the active target.',
+    handler: (input) => createFlowInSolution(input),
+    inputSchema: createFlowInSolutionInputSchema,
+    name: 'create_flow_in_solution',
     risk: 'write',
   }),
   createCommand({

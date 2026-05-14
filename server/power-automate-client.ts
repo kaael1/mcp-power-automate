@@ -1331,7 +1331,7 @@ const getManageSolutionsReason = (reasonCode: CapabilityReasonCode | null, noSes
     case 'NO_SESSION':
       return noSessionReason;
     default:
-      return 'Solutions read-only tools are not ready for the current environment.';
+      return 'Solution inspection and flow-add tools are not ready for the current environment.';
   }
 };
 

@@ -219,8 +219,18 @@ const buildSessionSignature = (session: CapturedSession) =>
 
 const checkBridgeHealth = async () => {
   try {
-    const response = await fetch(`${BRIDGE_URL}/health`);
+    let response = await fetch(`${BRIDGE_URL}/health`);
+
+    if (response.status === 404) {
+      response = await fetch('http://127.0.0.1:17373/health');
+    }
+
     const body = (await response.json()) as Record<string, unknown>;
+
+    if (!response.ok) {
+      throw new Error((body.error as string | undefined) || `Bridge health request failed with ${response.status}`);
+    }
+
     await setStorage({ [STORAGE_KEYS.lastHealth]: body });
     return body;
   } catch (error) {
@@ -696,6 +706,23 @@ const buildSessionFromTabState = (tabState: BackgroundTabState): Session | null 
 const isPowerAutomateUrl = (url: string | null | undefined) =>
   /(^|\.)powerautomate\.com|(^|\.)make\.powerapps\.com|(^|\.)powerapps\.com|(^|\.)flow\.microsoft\.com|(^|\.)powerplatform\.com|(^|\.)dynamics\.com/i.test(url || '');
 
+const injectCaptureScriptsIntoTarget = async (target: chrome.scripting.InjectionTarget) => {
+  await chrome.scripting.executeScript({
+    files: ['storage-capture.js'],
+    target,
+  });
+
+  try {
+    await chrome.scripting.executeScript({
+      files: ['page-probe.js'],
+      target,
+      world: 'MAIN',
+    });
+  } catch {
+    // The content script still attempts DOM injection, which covers older Chromium builds.
+  }
+};
+
 const injectCaptureScript = async (tabId: number, frameIds?: number[]) => {
   if (!chrome.scripting?.executeScript) return;
 
@@ -704,10 +731,7 @@ const injectCaptureScript = async (tabId: number, frameIds?: number[]) => {
       ? ({ tabId, frameIds } as chrome.scripting.InjectionTarget)
       : { tabId, allFrames: true };
 
-    await chrome.scripting.executeScript({
-      files: ['storage-capture.js'],
-      target,
-    });
+    await injectCaptureScriptsIntoTarget(target);
   } catch {
     if (!frameIds?.length) {
       // If frame-level targeting fails, avoid retrying the same operation recursively.
@@ -715,10 +739,7 @@ const injectCaptureScript = async (tabId: number, frameIds?: number[]) => {
     }
 
     try {
-      await chrome.scripting.executeScript({
-        files: ['storage-capture.js'],
-        target: { allFrames: true, tabId },
-      });
+      await injectCaptureScriptsIntoTarget({ allFrames: true, tabId });
     } catch {
       // Some browser pages or transient tabs cannot be scripted. WebRequest capture still helps there.
     }

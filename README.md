@@ -63,7 +63,7 @@ Ask your MCP client to:
 
 For run inspection and manual/request trigger tests, use `list_runs`, `get_latest_run`, `get_run`, `get_run_actions`, `wait_for_run`, `get_trigger_callback_url`, and `invoke_trigger`.
 
-For Dataverse solution inspection, use `list_solutions`, `list_solution_components`, and `list_environment_variables`. These tools are read-only in this release.
+For Dataverse solution work, use `list_solutions`, `list_solution_components`, `list_environment_variables`, `add_flow_to_solution`, and `create_flow_in_solution`. Solution writes are intentionally limited to adding cloud flows to unmanaged solutions.
 
 ## Public v1 Tools
 
@@ -74,6 +74,7 @@ For Dataverse solution inspection, use `list_solutions`, `list_solution_componen
 - `list_solutions`
 - `list_solution_components`
 - `list_environment_variables`
+- `add_flow_to_solution`
 - `get_flow`
 - `preview_flow_update`
 - `validate_flow`
@@ -88,19 +89,22 @@ For Dataverse solution inspection, use `list_solutions`, `list_solution_componen
 - `get_trigger_callback_url`
 - `invoke_trigger`
 - `create_flow`
+- `create_flow_in_solution`
 - `clone_flow`
 
 ## Solutions And Environment Variables
 
 The extension can capture Power Platform/BAP and Dataverse-audience tokens from the logged-in browser session. When those tokens are present, `get_context` and `/health` expose `canManageSolutions` and the MCP can inspect Dataverse solutions for the current or provided environment.
 
-The first solution-oriented surface is intentionally read-only:
+The solution-oriented surface supports inspection plus one focused write path for unmanaged solutions:
 
 - `list_solutions` lists visible unmanaged solutions by default.
 - `list_solution_components` lists components for a solution unique name, with optional enrichment for cloud flows and environment variables.
 - `list_environment_variables` lists environment variable definitions and current values, optionally scoped to one solution.
+- `add_flow_to_solution` adds an existing cloud flow as a workflow component in an unmanaged solution.
+- `create_flow_in_solution` creates a blank cloud flow in the current environment, then adds it to an unmanaged solution.
 
-Write operations such as creating solutions, setting environment variable values, publishing customizations, deleting components, or deleting flows are not exposed in this phase.
+Write operations such as creating solutions, setting environment variable values, publishing customizations, deleting components, or deleting flows are not exposed in this phase. Managed solutions are rejected for flow-add operations.
 
 ## HTTP Bridge
 
