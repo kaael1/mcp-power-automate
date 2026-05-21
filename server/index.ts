@@ -599,17 +599,8 @@ const ensureBridgeServer = async () => {
     if ((error as NodeJS.ErrnoException)?.code !== 'EADDRINUSE') {
       throw error;
     }
-
-    const healthyBridge = await probeExistingBridge();
-
-    if (healthyBridge) {
-      ownsBridgeServer = false;
-      setBridgeMode('reused');
-      return { health: healthyBridge, mode: 'reused' as const };
-    }
-
     throw new Error(
-      `Bridge port ${bridgePort} is already in use, but no healthy bridge answered on ${getBridgeHealthUrl()}. Stop the stale process or choose another POWER_AUTOMATE_BRIDGE_PORT.`,
+      `Bridge port ${bridgePort} is already in use. Refusing to reuse an existing bridge process. Stop the existing process or choose another POWER_AUTOMATE_BRIDGE_PORT.`,
       { cause: error },
     );
   }
