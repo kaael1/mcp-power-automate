@@ -5,8 +5,10 @@ export const bridgeHost = process.env.POWER_AUTOMATE_BRIDGE_HOST || '127.0.0.1';
 export const bridgeOrigin = `http://${bridgeHost}:${bridgePort}`;
 export const editorSchema = 'https://power-automate-tools.local/flow-editor.json#';
 
-export const flowIdSchema = z.string().trim().min(1, 'flowId is required');
-export const envIdSchema = z.string().trim().min(1, 'envId is required');
+const safePathSegmentSchema = z.string().trim().min(1).regex(/^[^\/?#%]+$/, 'must be a single path-safe segment');
+
+export const flowIdSchema = safePathSegmentSchema.describe('flowId');
+export const envIdSchema = safePathSegmentSchema.describe('envId');
 export const tokenSchema = z.string().trim().min(1, 'token is required');
 export const baseUrlSchema = z.string().url('baseUrl must be a valid URL');
 export const selectionSourceSchema = z.enum(['clone-result', 'create-result', 'manual', 'tab-capture']);

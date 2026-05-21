@@ -170,17 +170,33 @@ const resolveFlowDisplayName = ({
 };
 
 const resolveTarget = (session: Session, target?: TargetRef): ResolvedTarget | null => {
+  const activeTarget = getActiveOrTabTarget(session);
+
   if (target?.flowId) {
-    return {
-      displayName: resolveFlowDisplayName(target),
-      envId: target.envId,
-      flowId: target.flowId,
-      selectedAt: null,
-      selectionSource: 'direct-target',
-    };
+    if (!activeTarget?.flowId) {
+      throw new PowerAutomateSessionError({
+        code: 'NO_TARGET',
+        message:
+          'No active flow target is selected. Use connect_flow, or focus a captured Power Automate flow tab first.',
+      });
+    }
+
+    if (target.envId !== activeTarget.envId || target.flowId !== activeTarget.flowId) {
+      throw new PowerAutomateSessionError({
+        code: 'TARGET_MISMATCH',
+        details: {
+          activeTarget: {
+            envId: activeTarget.envId,
+            flowId: activeTarget.flowId,
+          },
+          requestedTarget: target,
+        },
+        message:
+          'Explicit target override is only allowed when it matches the currently selected flow target. Use connect_flow to change the active target first.',
+      });
+    }
   }
 
-  const activeTarget = getActiveOrTabTarget(session);
 
   if (!activeTarget?.flowId) return null;
 

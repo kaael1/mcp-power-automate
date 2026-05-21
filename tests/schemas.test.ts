@@ -3,6 +3,8 @@ import { describe, expect, it } from 'vitest';
 import {
   addFlowToSolutionInputSchema,
   createFlowInSolutionInputSchema,
+  envIdSchema,
+  flowIdSchema,
   flowCatalogItemSchema,
   sessionSchema,
   waitForRunInputSchema,
@@ -33,6 +35,13 @@ describe('schemas', () => {
         flowId: '123e4567-e89b-12d3-a456-426614174000',
       }),
     ).toThrowError(/displayName is required/i);
+  });
+
+  it('rejects encoded path delimiters in flow targets', () => {
+    for (const value of ['abc%2Fdef', 'abc%3Fdef', 'abc%23def']) {
+      expect(() => envIdSchema.parse(value)).toThrowError(/single path-safe segment/i);
+      expect(() => flowIdSchema.parse(value)).toThrowError(/single path-safe segment/i);
+    }
   });
 
   it('limits wait-for-run polling inputs', () => {
