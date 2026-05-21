@@ -419,10 +419,11 @@ const buildInFilter = (propertyName: string, ids: string[]) =>
 
 const summarizeEnvVar = (row: EnvVarDefinitionRow) => {
   const valueRow = row.environmentvariabledefinition_environmentvariablevalue?.[0];
+  const isSecret = row.type === 100000005;
 
   return {
-    currentValue: valueRow?.value ?? null,
-    defaultValue: row.defaultvalue ?? null,
+    currentValue: isSecret ? null : (valueRow?.value ?? null),
+    defaultValue: isSecret ? null : (row.defaultvalue ?? null),
     definitionId: row.environmentvariabledefinitionid,
     description: row.description ?? null,
     displayName: row.displayname ?? null,
