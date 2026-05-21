@@ -446,4 +446,58 @@ describe('dataverse client', () => {
       },
     });
   });
+
+  it('redacts secret environment variable values', async () => {
+    const tokenAuditStore = await import('../server/token-audit-store.js');
+    const orgStore = await import('../server/dataverse-org-store.js');
+    const solutions = await import('../server/dataverse-solutions.js');
+    const exp = Math.floor(Date.now() / 1000) + 3600;
+    const fetchMock = vi.fn(async () =>
+      createJsonResponse({
+        value: [
+          {
+            defaultvalue: 'DEFAULT_SECRET_SHOULD_NOT_LEAK',
+            description: 'Secret setting',
+            displayname: 'Secret Variable',
+            environmentvariabledefinition_environmentvariablevalue: [
+              {
+                environmentvariablevalueid: 'value-id',
+                value: 'CURRENT_SECRET_SHOULD_NOT_LEAK',
+              },
+            ],
+            environmentvariabledefinitionid: 'def-id',
+            isrequired: true,
+            schemaname: 'contoso_SecretVar',
+            type: 100000005,
+          },
+        ],
+      }),
+    );
+
+    await orgStore.saveDataverseOrgRecord(cachedOrg);
+    await tokenAuditStore.saveTokenAudit({
+      candidates: [
+        {
+          aud: 'https://org.crm.dynamics.com',
+          exp,
+          source: 'test',
+          token: 'dataverse-token',
+        },
+      ],
+      capturedAt: '2026-04-01T00:00:00.000Z',
+      source: 'test',
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const result = await solutions.listEnvironmentVariables({ envId: 'Default-123' });
+
+    expect(result.variables).toEqual([
+      expect.objectContaining({
+        currentValue: null,
+        defaultValue: null,
+        schemaName: 'contoso_SecretVar',
+        type: 'secret',
+      }),
+    ]);
+  });
 });
