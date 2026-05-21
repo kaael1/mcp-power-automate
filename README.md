@@ -14,7 +14,7 @@ The extension captures the browser session, current flow, snapshots, and token c
 ## What v1 Changes
 
 - One command registry powers both MCP tools and HTTP bridge routes.
-- The local bridge is authoritative; reused MCP instances proxy commands to the bridge owner.
+- The local bridge is single-owner; a second MCP instance fails fast if the bridge port is already occupied.
 - Flow targeting is automatic-first through captured tabs, explicit `connect_flow`, catalog data, and snapshots.
 - The extension is status and diagnostics only. It no longer requires manual refresh/sync buttons for normal operation.
 - npm ships the built server and built extension together.
@@ -116,7 +116,7 @@ The bridge listens on `127.0.0.1:17373`.
 - `GET /v1/commands` lists the public v1 command surface.
 - `POST /v1/commands/:name` runs any public v1 command with a JSON body.
 
-Only the process that owns the bridge port executes stateful work. Other MCP instances reuse the healthy bridge and proxy commands to it.
+Only the process that owns the bridge port executes stateful work. If another process already owns the port, new MCP instances refuse to reuse it; stop the existing bridge process or choose a different `POWER_AUTOMATE_BRIDGE_PORT`.
 
 ## Safety Model
 

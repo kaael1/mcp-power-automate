@@ -106,6 +106,7 @@ Use only when the trigger is manual/request based and the payload is safe.
 - `SCHEMA_VALIDATION_FAILED`: fix the candidate flow JSON. If details include a rejected member such as `retryPolicy`, remove or relocate that field intentionally.
 - `CONNECTION_AUTHORIZATION_FAILED`: stop retrying saves. The user must fix the named connector or connection permissions in Power Automate.
 - `FLOW_NOT_FOUND`: call `list_flows` and `connect_flow`; browser-captured flows may still be usable even when the live catalog is stale.
+- Bridge port already in use: stop the existing bridge process or restart this MCP with a different `POWER_AUTOMATE_BRIDGE_PORT`. Do not assume an unknown local process is safe to reuse.
 
 ## Good Prompts
 
