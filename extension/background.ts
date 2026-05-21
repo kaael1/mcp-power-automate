@@ -67,6 +67,19 @@ const getTabState = (tabId: number) => {
   return state.tabs[tabId] as BackgroundTabState;
 };
 
+const doesMessageContextMatchTab = (
+  tabUrl: string | null | undefined,
+  context: {
+    envId?: string | null;
+    flowId?: string | null;
+  },
+) => {
+  if (!tabUrl || !context.envId || !context.flowId) return false;
+
+  const portalData = extractFromPortalUrl(tabUrl);
+  return portalData?.envId === context.envId && portalData?.flowId === context.flowId;
+};
+
 const syncCapturedTabContext = async (
   tabId: number,
   context: {
@@ -934,7 +947,13 @@ chrome.runtime.onMessage.addListener((message: RuntimeMessage, sender, sendRespo
     postSnapshotToBridge(message.payload)
       .then(async (result) => {
         const targetTabId = sender?.tab?.id;
-        if (typeof targetTabId === 'number') {
+        if (
+          typeof targetTabId === 'number' &&
+          doesMessageContextMatchTab(sender?.tab?.url, {
+            envId: message.payload.envId,
+            flowId: message.payload.flowId,
+          })
+        ) {
           await syncCapturedTabContext(targetTabId, {
             envId: message.payload.envId,
             flowId: message.payload.flowId,
@@ -954,7 +973,13 @@ chrome.runtime.onMessage.addListener((message: RuntimeMessage, sender, sendRespo
     postTokenAuditToBridge(message.payload)
       .then(async () => {
         const targetTabId = sender?.tab?.id;
-        if (typeof targetTabId === 'number') {
+        if (
+          typeof targetTabId === 'number' &&
+          doesMessageContextMatchTab(sender?.tab?.url, {
+            envId: message.payload.envId,
+            flowId: message.payload.flowId,
+          })
+        ) {
           await syncCapturedTabContext(targetTabId, {
             envId: message.payload.envId,
             flowId: message.payload.flowId,
