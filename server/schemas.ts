@@ -5,7 +5,7 @@ export const bridgeHost = process.env.POWER_AUTOMATE_BRIDGE_HOST || '127.0.0.1';
 export const bridgeOrigin = `http://${bridgeHost}:${bridgePort}`;
 export const editorSchema = 'https://power-automate-tools.local/flow-editor.json#';
 
-const safePathSegmentSchema = z.string().trim().min(1).regex(/^[^\/?#]+$/, 'must be a single path-safe segment');
+const safePathSegmentSchema = z.string().trim().min(1).regex(/^[^\/?#%]+$/, 'must be a single path-safe segment');
 
 export const flowIdSchema = safePathSegmentSchema.describe('flowId');
 export const envIdSchema = safePathSegmentSchema.describe('envId');
