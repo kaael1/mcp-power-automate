@@ -55,6 +55,7 @@ import { packageVersion } from './version.js';
 
 const mcpServer = createMcpApp();
 let ownsBridgeServer = false;
+const bridgeCommandToken = process.env.POWER_AUTOMATE_BRIDGE_COMMAND_TOKEN?.trim() || null;
 
 const sendJson = (response: ServerResponse, statusCode: number, payload: unknown) => {
   response.writeHead(statusCode, {
@@ -187,6 +188,8 @@ export const createBridgeServer = () =>
       const requestUrl = new URL(request.url, `http://${bridgeHost}:${bridgePort}`);
       const isV1 = requestUrl.pathname === '/v1' || requestUrl.pathname.startsWith('/v1/');
       const normalizedPath = isV1 ? requestUrl.pathname.replace(/^\/v1(?=\/|$)/, '') || '/' : requestUrl.pathname;
+      const hasValidCommandToken =
+        Boolean(bridgeCommandToken) && request.headers['x-power-automate-bridge-token'] === bridgeCommandToken;
 
       if (request.method === 'OPTIONS') {
         sendJson(response, 204, { ok: true });
@@ -199,6 +202,15 @@ export const createBridgeServer = () =>
       }
 
       if (request.method === 'GET' && requestUrl.pathname === '/v1/commands') {
+        if (!hasValidCommandToken) {
+          sendJson(response, 401, {
+            code: 'UNAUTHORIZED',
+            error: 'Missing or invalid bridge command token.',
+            retryable: false,
+          } satisfies BridgeErrorResponse);
+          return;
+        }
+
         sendJson(response, 200, {
           commands: commandDefinitions.map(({ description, name, risk }) => ({ description, name, risk })),
           ok: true,
@@ -207,6 +219,15 @@ export const createBridgeServer = () =>
       }
 
       if (request.method === 'POST' && requestUrl.pathname.startsWith('/v1/commands/')) {
+        if (!hasValidCommandToken) {
+          sendJson(response, 401, {
+            code: 'UNAUTHORIZED',
+            error: 'Missing or invalid bridge command token.',
+            retryable: false,
+          } satisfies BridgeErrorResponse);
+          return;
+        }
+
         const commandName = decodeURIComponent(requestUrl.pathname.replace('/v1/commands/', ''));
         if (!getCommandDefinition(commandName)) {
           sendJson(response, 404, { code: 'INVALID_REQUEST', error: `Unknown command: ${commandName}`, retryable: false } satisfies BridgeErrorResponse);
