@@ -58,9 +58,6 @@ let ownsBridgeServer = false;
 
 const sendJson = (response: ServerResponse, statusCode: number, payload: unknown) => {
   response.writeHead(statusCode, {
-    'Access-Control-Allow-Headers': 'content-type',
-    'Access-Control-Allow-Methods': 'GET,POST,OPTIONS',
-    'Access-Control-Allow-Origin': '*',
     'Content-Type': 'application/json; charset=utf-8',
   });
   response.end(`${JSON.stringify(payload, null, 2)}\n`);
@@ -188,11 +185,6 @@ export const createBridgeServer = () =>
       const isV1 = requestUrl.pathname === '/v1' || requestUrl.pathname.startsWith('/v1/');
       const normalizedPath = isV1 ? requestUrl.pathname.replace(/^\/v1(?=\/|$)/, '') || '/' : requestUrl.pathname;
 
-      if (request.method === 'OPTIONS') {
-        sendJson(response, 204, { ok: true });
-        return;
-      }
-
       if (request.method === 'GET' && (requestUrl.pathname === '/health' || requestUrl.pathname === '/v1/health')) {
         sendJson(response, 200, createHealthPayload());
         return;
@@ -208,8 +200,17 @@ export const createBridgeServer = () =>
 
       if (request.method === 'POST' && requestUrl.pathname.startsWith('/v1/commands/')) {
         const commandName = decodeURIComponent(requestUrl.pathname.replace('/v1/commands/', ''));
-        if (!getCommandDefinition(commandName)) {
+        const definition = getCommandDefinition(commandName);
+        if (!definition) {
           sendJson(response, 404, { code: 'INVALID_REQUEST', error: `Unknown command: ${commandName}`, retryable: false } satisfies BridgeErrorResponse);
+          return;
+        }
+        if (definition.risk === 'write') {
+          sendJson(response, 403, {
+            code: 'ACTION_REQUIRES_CONFIRMATION',
+            error: `Command "${commandName}" is blocked on the unauthenticated HTTP bridge. Use MCP transport for write commands.`,
+            retryable: false,
+          } satisfies BridgeErrorResponse);
           return;
         }
 
