@@ -43,7 +43,7 @@ import {
 import { toErrorPayload } from './errors.js';
 import { getLastRun, loadLastRun } from './last-run-store.js';
 import { getPackageRoot } from './runtime-paths.js';
-import { bridgeHost, bridgePort, capturedSessionSchema, captureDiagnosticSchema, flowIdSchema, flowSnapshotSchema, selectWorkTabInputSchema, sessionSchema, tokenAuditSchema } from './schemas.js';
+import { bridgeHost, bridgeOrigin, bridgePort, capturedSessionSchema, captureDiagnosticSchema, flowIdSchema, flowSnapshotSchema, selectWorkTabInputSchema, sessionSchema, tokenAuditSchema } from './schemas.js';
 import { getSession, loadSession, saveSession } from './session-store.js';
 import { clearSelectedWorkTab, getSelectedWorkTab, loadSelectedWorkTab, saveSelectedWorkTab } from './selected-work-tab-store.js';
 import { getTokenAudit, loadTokenAudit, mergeTokenAudit } from './token-audit-store.js';
@@ -56,13 +56,30 @@ import { packageVersion } from './version.js';
 const mcpServer = createMcpApp();
 let ownsBridgeServer = false;
 
-const sendJson = (response: ServerResponse, statusCode: number, payload: unknown) => {
-  response.writeHead(statusCode, {
+const getAllowedOrigin = (request: IncomingMessage) => {
+  const originHeader = request.headers.origin;
+
+  if (typeof originHeader !== 'string' || originHeader.length === 0) return null;
+  if (originHeader === bridgeOrigin) return originHeader;
+  if (originHeader.startsWith('chrome-extension://')) return originHeader;
+
+  return null;
+};
+
+const sendJson = (request: IncomingMessage, response: ServerResponse, statusCode: number, payload: unknown) => {
+  const allowedOrigin = getAllowedOrigin(request);
+  const headers: Record<string, string> = {
     'Access-Control-Allow-Headers': 'content-type',
     'Access-Control-Allow-Methods': 'GET,POST,OPTIONS',
-    'Access-Control-Allow-Origin': '*',
     'Content-Type': 'application/json; charset=utf-8',
-  });
+  };
+
+  if (allowedOrigin) {
+    headers['Access-Control-Allow-Origin'] = allowedOrigin;
+    headers.Vary = 'Origin';
+  }
+
+  response.writeHead(statusCode, headers);
   response.end(`${JSON.stringify(payload, null, 2)}\n`);
 };
 
@@ -180,7 +197,15 @@ export const createBridgeServer = () =>
   http.createServer(async (request, response) => {
     try {
       if (!request.url) {
-        sendJson(response, 400, { error: 'Missing request URL.' } satisfies BridgeErrorResponse);
+        sendJson(request, response, 400, { error: 'Missing request URL.' } satisfies BridgeErrorResponse);
+        return;
+      }
+      if (request.headers.origin && !getAllowedOrigin(request)) {
+        sendJson(request, response, 403, {
+          code: 'INVALID_REQUEST',
+          error: 'Origin not allowed.',
+          retryable: false,
+        } satisfies BridgeErrorResponse);
         return;
       }
 
@@ -189,17 +214,17 @@ export const createBridgeServer = () =>
       const normalizedPath = isV1 ? requestUrl.pathname.replace(/^\/v1(?=\/|$)/, '') || '/' : requestUrl.pathname;
 
       if (request.method === 'OPTIONS') {
-        sendJson(response, 204, { ok: true });
+        sendJson(request, response, 204, { ok: true });
         return;
       }
 
       if (request.method === 'GET' && (requestUrl.pathname === '/health' || requestUrl.pathname === '/v1/health')) {
-        sendJson(response, 200, createHealthPayload());
+        sendJson(request, response, 200, createHealthPayload());
         return;
       }
 
       if (request.method === 'GET' && requestUrl.pathname === '/v1/commands') {
-        sendJson(response, 200, {
+        sendJson(request, response, 200, {
           commands: commandDefinitions.map(({ description, name, risk }) => ({ description, name, risk })),
           ok: true,
         });
@@ -209,12 +234,12 @@ export const createBridgeServer = () =>
       if (request.method === 'POST' && requestUrl.pathname.startsWith('/v1/commands/')) {
         const commandName = decodeURIComponent(requestUrl.pathname.replace('/v1/commands/', ''));
         if (!getCommandDefinition(commandName)) {
-          sendJson(response, 404, { code: 'INVALID_REQUEST', error: `Unknown command: ${commandName}`, retryable: false } satisfies BridgeErrorResponse);
+          sendJson(request, response, 404, { code: 'INVALID_REQUEST', error: `Unknown command: ${commandName}`, retryable: false } satisfies BridgeErrorResponse);
           return;
         }
 
         const body = await readJsonBody(request);
-        sendJson(response, 200, {
+        sendJson(request, response, 200, {
           ok: true,
           result: await executeCommand(commandName, body, { local: true }),
         });
@@ -222,12 +247,12 @@ export const createBridgeServer = () =>
       }
 
       if (request.method === 'GET' && normalizedPath === '/context') {
-        sendJson(response, 200, (await executeCommand('get_context', {}, { local: true })) as ContextPayload);
+        sendJson(request, response, 200, (await executeCommand('get_context', {}, { local: true })) as ContextPayload);
         return;
       }
 
       if (request.method === 'GET' && normalizedPath === '/captured-sessions') {
-        sendJson(response, 200, {
+        sendJson(request, response, 200, {
           ok: true,
           selectedTabId: getSelectedWorkTab()?.tabId || null,
           sessions: listCapturedTabs(),
@@ -236,7 +261,7 @@ export const createBridgeServer = () =>
       }
 
       if (request.method === 'GET' && normalizedPath === '/last-update') {
-        sendJson(response, 200, {
+        sendJson(request, response, 200, {
           lastUpdate: getLastUpdateSummary(),
           ok: true,
         } satisfies LastUpdateResponse);
@@ -244,7 +269,7 @@ export const createBridgeServer = () =>
       }
 
       if (request.method === 'GET' && normalizedPath === '/last-run') {
-        sendJson(response, 200, {
+        sendJson(request, response, 200, {
           lastRun: getLastRunSummary(),
           ok: true,
         } satisfies LastRunResponse);
@@ -267,7 +292,7 @@ export const createBridgeServer = () =>
           });
         }
 
-        sendJson(response, 200, {
+        sendJson(request, response, 200, {
           capturedAt: savedSession.capturedAt,
           envId: savedSession.envId,
           flowId: savedSession.flowId,
@@ -302,7 +327,7 @@ export const createBridgeServer = () =>
           });
         }
 
-        sendJson(response, 200, {
+        sendJson(request, response, 200, {
           capturedAt: savedSession.capturedAt,
           envId: savedSession.envId,
           flowId: savedSession.flowId,
@@ -322,7 +347,7 @@ export const createBridgeServer = () =>
           await clearSelectedWorkTab();
         }
 
-        sendJson(response, 200, { ok: true });
+        sendJson(request, response, 200, { ok: true });
         return;
       }
 
@@ -330,7 +355,7 @@ export const createBridgeServer = () =>
         const body = await readJsonBody(request);
         const snapshot = flowSnapshotSchema.parse(body);
         const savedSnapshot = await saveFlowSnapshot(snapshot);
-        sendJson(response, 200, {
+        sendJson(request, response, 200, {
           capturedAt: savedSnapshot.capturedAt,
           envId: savedSnapshot.envId,
           flowId: savedSnapshot.flowId,
@@ -344,7 +369,7 @@ export const createBridgeServer = () =>
         const body = await readJsonBody(request);
         const audit = tokenAuditSchema.parse(body);
         const savedAudit = await mergeTokenAudit(audit);
-        sendJson(response, 200, {
+        sendJson(request, response, 200, {
           candidateCount: savedAudit.candidates.length,
           capturedAt: savedAudit.capturedAt,
           flowId: savedAudit.flowId || null,
@@ -355,7 +380,7 @@ export const createBridgeServer = () =>
       }
 
       if (request.method === 'GET' && normalizedPath === '/flows') {
-        sendJson(response, 200, {
+        sendJson(request, response, 200, {
           flows: await listFlows({ limit: 200 }),
           ok: true,
         });
@@ -363,7 +388,7 @@ export const createBridgeServer = () =>
       }
 
       if (request.method === 'POST' && normalizedPath === '/refresh-flows') {
-        sendJson(response, 200, {
+        sendJson(request, response, 200, {
           flows: await refreshFlows(),
           ok: true,
         });
@@ -371,7 +396,7 @@ export const createBridgeServer = () =>
       }
 
       if (request.method === 'GET' && normalizedPath === '/active-flow') {
-        sendJson(response, 200, {
+        sendJson(request, response, 200, {
           activeFlow: await getActiveFlow(),
           ok: true,
         });
@@ -381,7 +406,7 @@ export const createBridgeServer = () =>
       if (request.method === 'POST' && normalizedPath === '/active-flow') {
         const body = await readJsonBody(request);
         const flowId = flowIdSchema.parse((body as { flowId?: string }).flowId);
-        sendJson(response, 200, {
+        sendJson(request, response, 200, {
           activeFlow: await selectFlow({ flowId }),
           ok: true,
         });
@@ -392,7 +417,7 @@ export const createBridgeServer = () =>
         const body = await readJsonBody(request);
         const diagnostic = captureDiagnosticSchema.parse(body);
         const saved = await saveCaptureDiagnostic(diagnostic);
-        sendJson(response, 200, {
+        sendJson(request, response, 200, {
           capturedAt: saved.capturedAt,
           ok: true,
           source: saved.source,
@@ -403,7 +428,7 @@ export const createBridgeServer = () =>
       }
 
       if (request.method === 'POST' && normalizedPath === '/active-flow/from-tab') {
-        sendJson(response, 200, {
+        sendJson(request, response, 200, {
           activeFlow: await selectTabFlow(),
           ok: true,
         });
@@ -413,7 +438,7 @@ export const createBridgeServer = () =>
       if (request.method === 'POST' && normalizedPath === '/select-flow') {
         const body = await readJsonBody(request);
         const flowId = flowIdSchema.parse((body as { flowId?: string }).flowId);
-        sendJson(response, 200, {
+        sendJson(request, response, 200, {
           activeFlow: await selectFlow({ flowId }),
           ok: true,
         });
@@ -421,7 +446,7 @@ export const createBridgeServer = () =>
       }
 
       if (request.method === 'POST' && normalizedPath === '/select-flow/from-tab') {
-        sendJson(response, 200, {
+        sendJson(request, response, 200, {
           activeFlow: await selectTabFlow(),
           ok: true,
         });
@@ -432,7 +457,7 @@ export const createBridgeServer = () =>
         const body = await readJsonBody(request);
         const parsed = selectWorkTabInputSchema.parse(body);
         const selected = await selectWorkTab({ tabId: parsed.tabId });
-        sendJson(response, 200, {
+        sendJson(request, response, 200, {
           ok: true,
           selectedTabId: selected.selectedWorkSession.tabId,
         } satisfies SelectWorkTabResponse);
@@ -441,7 +466,7 @@ export const createBridgeServer = () =>
 
       if (request.method === 'POST' && normalizedPath === '/revert-last-update') {
         const reverted = await revertLastUpdate();
-        sendJson(response, 200, {
+        sendJson(request, response, 200, {
           flowId: reverted.flow.flowId,
           ok: true,
           reverted,
@@ -451,17 +476,17 @@ export const createBridgeServer = () =>
 
       if (request.method === 'POST' && normalizedPath === '/refresh-last-run') {
         const lastRun = await refreshLatestRun();
-        sendJson(response, 200, {
+        sendJson(request, response, 200, {
           lastRun,
           ok: true,
         } satisfies RefreshLastRunResponse);
         return;
       }
 
-      sendJson(response, 404, { error: 'Route not found.' } satisfies BridgeErrorResponse);
+      sendJson(request, response, 404, { error: 'Route not found.' } satisfies BridgeErrorResponse);
     } catch (error) {
       if (error instanceof ZodError) {
-        sendJson(response, 400, {
+        sendJson(request, response, 400, {
           code: 'INVALID_REQUEST',
           details: error.issues,
           error: 'Invalid request payload.',
@@ -470,7 +495,7 @@ export const createBridgeServer = () =>
         return;
       }
 
-      sendJson(response, 500, toBridgeErrorResponse(error));
+      sendJson(request, response, 500, toBridgeErrorResponse(error));
     }
   });
 
