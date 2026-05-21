@@ -132,6 +132,27 @@ describe('power automate client', () => {
     expect(updateStore.getLastUpdate()?.flowId).toBe('flow-a');
   });
 
+
+  it('rejects direct targets that do not match the selected flow target', async () => {
+    const sessionStore = await import('../server/session-store.js');
+    const targetStore = await import('../server/active-target-store.js');
+    const client = await import('../server/power-automate-client.js');
+
+    await sessionStore.saveSession(validSession);
+    await targetStore.saveActiveTarget(activeTarget);
+
+    await expect(
+      client.getCurrentFlow({
+        target: {
+          envId: 'Default-123',
+          flowId: 'flow-b',
+        },
+      }),
+    ).rejects.toMatchObject({
+      code: 'TARGET_MISMATCH',
+    });
+  });
+
   it('reports capability diagnostics when store health is corrupted and no session is available', async () => {
     const storeUtils = await import('../server/store-utils.js');
     const client = await import('../server/power-automate-client.js');
