@@ -16,5 +16,68 @@
   "repository": {
     "url": "https://github.com/kaael1/mcp-power-automate",
     "source": "github"
+  },
+  "_meta": {
+    "io.modelcontextprotocol.registry/publisher-provided": {
+      "asm": {
+        "asm_version": "0.3",
+        "service_id": "kaael1/mcp-power-automate@1.0",
+        "taxonomy": "tool.workflow.automation",
+        "display_name": "MCP Power Automate",
+        "provenance": {
+          "source_url": "https://github.com/kaael1/mcp-power-automate",
+          "retrieved_at": "2026-05-25T00:00:00Z",
+          "last_verified_at": "2026-05-25T00:00:00Z",
+          "verification_status": "self_reported",
+          "notes": "Publisher-provided MCP Registry metadata. Pricing is local/self-hosted; Microsoft Power Automate licensing and connector quotas remain external to this MCP package."
+        },
+        "pricing": {
+          "billing_dimensions": [
+            {
+              "dimension": "request",
+              "unit": "per_1K",
+              "cost_per_unit": 0,
+              "currency": "USD"
+            }
+          ],
+          "free_tier": "Local MCP package; external Microsoft licensing may apply."
+        },
+        "sla": {
+          "rate_limit": "local process; bounded by Chromium session, bridge availability, and Microsoft Power Automate service limits"
+        },
+        "payment": {
+          "methods": ["free_tier"],
+          "auth_type": "existing_chromium_session"
+        },
+        "operational_constraints": {
+          "risk_class": "high",
+          "side_effects": [
+            "external_api_call",
+            "persistent_state",
+            "workflow_mutation",
+            "browser_session"
+          ],
+          "approval": {
+            "required": "conditional",
+            "conditions": [
+              "command mutates a Power Automate flow",
+              "command invokes a trigger callback URL",
+              "command adds or creates Dataverse solution components"
+            ],
+            "human_readable": "Inspection and validation can run without extra approval; flow mutation, trigger invocation, and solution writes should be gated by the MCP client's local approval policy."
+          },
+          "rate_limits": [
+            {
+              "dimension": "request",
+              "limit": 1,
+              "period": "second",
+              "scope": "local_bridge"
+            }
+          ],
+          "receipt_required": false,
+          "policy_notes": "ASM exposes pre-call policy inputs only; the MCP client remains responsible for enforcing approval and safety boundaries."
+        }
+      }
+    }
   }
 }
