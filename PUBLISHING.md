@@ -10,6 +10,7 @@ Current surfaces:
 - provider marketplaces such as LobeHub that can list the MCP, the skill bundle, or both
 
 See `docs/multi-provider-distribution.md` for the architectural rule: one repo, one MCP package, one canonical skill bundle, thin provider adapters.
+Use `docs/launch-kit.md` as the source for launch copy, repo metadata, social proof, and visual guidance.
 
 ## 1. Verify the package locally
 
@@ -17,6 +18,13 @@ See `docs/multi-provider-distribution.md` for the architectural rule: one repo, 
 bun run check
 npm pack --dry-run
 ```
+
+Confirm the dry run includes:
+
+- `README.md`
+- `assets/readme-cover.png`
+- `skills/power-automate-mcp/SKILL.md`
+- `server.json`
 
 ## 2. Publish to npm
 
@@ -138,3 +146,4 @@ Notes:
 - skills.sh discoverability is influenced by install telemetry, so the direct `npx skills add kaael1/mcp-power-automate --skill power-automate-mcp` path matters for early momentum.
 - The newer `mcp-publisher` CLI accepts `publish --dry-run`, which is useful for validating `server.json` before pushing a live registry update.
 - When adding a new provider, prefer adding a thin adapter doc or marketplace entry rather than forking `skills/power-automate-mcp/SKILL.md`.
+- Refresh any public traction numbers from `docs/launch-kit.md` before copying them into a new post or marketplace submission.

@@ -1,27 +1,39 @@
 <p align="center">
-  <img src="./assets/readme-banner.svg" alt="MCP Power Automate banner" width="100%" />
+  <img src="./assets/readme-cover.png" alt="MCP Power Automate cover: inspect, validate, edit, and revert Power Automate flows with an MCP agent" width="720" />
 </p>
 
 # MCP Power Automate
 
-Local MCP server and Chromium extension for AI-operated Microsoft Power Automate flows.
+Local-first MCP server and Chromium extension for AI-assisted Microsoft Power Automate work.
 
-The extension captures the browser session, current flow, snapshots, and token candidates automatically. The MCP server exposes one clean v1 tool surface so the AI can inspect, edit, validate, run, review, and revert flows without asking the user to click extension buttons just to make the connection work.
+Use your existing logged-in browser session to let an MCP client inspect, validate, edit, run, review, and revert Power Automate cloud flows. No Microsoft Entra ID app registration, admin consent flow, or custom enterprise application setup is required to get started.
 
-> No Microsoft Entra ID app registration, admin consent, or custom enterprise app setup is required.
-> The MCP uses your existing logged-in Chromium session.
+> Early public signal: 15,000+ LinkedIn post views and 14 GitHub stars while the project is still small, practical, and moving fast.
 
-## What v1 Changes
+## Why It Exists
 
-- One command registry powers both MCP tools and HTTP bridge routes.
-- The local bridge is single-owner; a second MCP instance fails fast if the bridge port is already occupied.
-- Flow targeting is automatic-first through captured tabs, explicit `connect_flow`, catalog data, and snapshots.
-- The extension is status and diagnostics only. It no longer requires manual refresh/sync buttons for normal operation.
-- npm ships the built server and built extension together.
+Power Automate is powerful, but AI agents need more than raw convenience before they should touch real flows. This project keeps the workflow visible and reversible:
 
-## Install
+- The browser extension captures the active Power Automate context and compatible tokens from your own Chromium session.
+- The MCP server exposes a v1 command surface for targeting, reading, previewing, validating, saving, run inspection, and rollback.
+- The extension stays mostly passive: status, diagnostics, and review surfaces instead of mystery buttons that hide what changed.
+- Local state, snapshots, and backups stay on your machine.
 
-Register the MCP:
+## What It Can Do
+
+| Area | Capabilities |
+| --- | --- |
+| Context | Detect browser-captured flows, list flows, and explicitly lock onto a target flow. |
+| Safe editing | Read the flow, preview the smallest candidate update, validate, save, review the diff, and revert. |
+| Debugging | Inspect recent runs, latest run details, and action-level failures. |
+| Testing | Invoke safe manual/request trigger flows and wait for the resulting run. |
+| Solutions | List unmanaged Dataverse solutions, inspect solution components and environment variables, add existing flows, and create blank flows inside solutions. |
+
+Write operations are deliberately scoped. The MCP does not expose solution deletion, component deletion, managed-solution modification, environment-variable writes, or blind production edits as the default path.
+
+## Quickstart
+
+Register the MCP in Codex:
 
 ```powershell
 codex mcp add power-automate-local -- npx -y @kaael1/mcp-power-automate
@@ -35,12 +47,12 @@ npx -y @kaael1/mcp-power-automate extension-path
 
 Load that folder in Chromium:
 
-1. Open `chrome://extensions` or `edge://extensions`
-2. Enable Developer Mode
-3. Choose `Load unpacked`
-4. Select the path printed by `extension-path`
+1. Open `chrome://extensions` or `edge://extensions`.
+2. Enable Developer Mode.
+3. Choose `Load unpacked`.
+4. Select the folder printed by `extension-path`.
 
-Open or focus any Power Automate flow page. The extension captures the context automatically.
+Then open or focus a Power Automate flow page. The extension captures the session and target context automatically.
 
 Check readiness:
 
@@ -48,9 +60,9 @@ Check readiness:
 npx -y @kaael1/mcp-power-automate doctor
 ```
 
-## Recommended AI Workflow
+## Recommended Agent Loop
 
-Ask your MCP client to:
+For a supervised edit, ask your MCP client to follow this loop:
 
 1. `doctor`
 2. `get_context`
@@ -60,6 +72,7 @@ Ask your MCP client to:
 6. `validate_flow`
 7. `apply_flow_update`
 8. `get_last_update`
+9. `validate_flow` again when available
 
 For run inspection and manual/request trigger tests, use `list_runs`, `get_latest_run`, `get_run`, `get_run_actions`, `wait_for_run`, `get_trigger_callback_url`, and `invoke_trigger`.
 
@@ -67,48 +80,53 @@ For Dataverse solution work, use `list_solutions`, `list_solution_components`, `
 
 ## Public v1 Tools
 
-- `get_context`
-- `doctor`
-- `connect_flow`
-- `list_flows`
-- `list_solutions`
-- `list_solution_components`
-- `list_environment_variables`
-- `add_flow_to_solution`
-- `get_flow`
-- `preview_flow_update`
-- `validate_flow`
-- `apply_flow_update`
-- `get_last_update`
-- `revert_last_update`
-- `list_runs`
-- `get_latest_run`
-- `get_run`
-- `get_run_actions`
-- `wait_for_run`
-- `get_trigger_callback_url`
-- `invoke_trigger`
-- `create_flow`
-- `create_flow_in_solution`
-- `clone_flow`
+```text
+get_context
+doctor
+connect_flow
+list_flows
+list_solutions
+list_solution_components
+list_environment_variables
+add_flow_to_solution
+get_flow
+preview_flow_update
+validate_flow
+apply_flow_update
+get_last_update
+revert_last_update
+list_runs
+get_latest_run
+get_run
+get_run_actions
+wait_for_run
+get_trigger_callback_url
+invoke_trigger
+create_flow
+create_flow_in_solution
+clone_flow
+```
 
-## Solutions And Environment Variables
+## Safety Model
 
-The extension can capture Power Platform/BAP and Dataverse-audience tokens from the logged-in browser session. When those tokens are present, `get_context` and `/health` expose `canManageSolutions` and the MCP can inspect Dataverse solutions for the current or provided environment.
+- Inspect with `get_context`, `connect_flow`, and `get_flow` before any write.
+- Preview with `preview_flow_update` before saving.
+- Validate before and after meaningful edits when Power Automate accepts validation.
+- Review `get_last_update` after save so the diff is visible.
+- Use `revert_last_update` when the saved result is wrong.
+- Prefer test or staging flows before production flows.
 
-The solution-oriented surface supports inspection plus one focused write path for unmanaged solutions:
+If Power Automate rejects a save because of a connection permission problem, the MCP reports `CONNECTION_AUTHORIZATION_FAILED` and waits for the user to fix that connection in Power Automate. If the service rejects a field such as `retryPolicy`, the MCP reports `SCHEMA_VALIDATION_FAILED` with the rejected member so the agent can correct the candidate flow instead of guessing.
 
-- `list_solutions` lists visible unmanaged solutions by default.
-- `list_solution_components` lists components for a solution unique name, with optional enrichment for cloud flows and environment variables.
-- `list_environment_variables` lists environment variable definitions and current values, optionally scoped to one solution.
-- `add_flow_to_solution` adds an existing cloud flow as a workflow component in an unmanaged solution.
-- `create_flow_in_solution` creates a blank cloud flow in the current environment, then adds it to an unmanaged solution.
+## Browser-Backed Auth
 
-Write operations such as creating solutions, setting environment variable values, publishing customizations, deleting components, or deleting flows are not exposed in this phase. Managed solutions are rejected for flow-add operations.
+The extension can capture Power Automate, Power Platform/BAP, and Dataverse-audience tokens from your logged-in browser session. When those tokens are present, `get_context` and `/health` expose readiness details such as `canManageSolutions`.
+
+This means the MCP can work without a new Microsoft Entra app registration, but it also means the browser session remains the live authority. If a token expires or a permission is missing, reopen or focus the relevant Power Automate, Power Apps, or Dataverse page and retry after capture.
 
 ## HTTP Bridge
 
-The bridge listens on `127.0.0.1:17373`.
+The local bridge listens on `127.0.0.1:17373`.
 
 - `GET /health` is kept for simple probes.
 - `GET /v1/health` returns bridge identity and readiness.
@@ -117,16 +135,6 @@ The bridge listens on `127.0.0.1:17373`.
 - `POST /v1/commands/:name` runs any public v1 command with a JSON body.
 
 Only the process that owns the bridge port executes stateful work. If another process already owns the port, new MCP instances refuse to reuse it; stop the existing bridge process or choose a different `POWER_AUTOMATE_BRIDGE_PORT`.
-
-## Safety Model
-
-- Use `preview_flow_update` before saves.
-- Use `validate_flow` before and after meaningful edits when available.
-- Use `get_last_update` to review the persisted diff.
-- Use `revert_last_update` if the saved result is wrong.
-- Prefer test or staging flows before production flows.
-
-If Power Automate rejects a save because of a connection permission problem, the MCP reports `CONNECTION_AUTHORIZATION_FAILED` and waits for the user to fix that connection in Power Automate. If the service rejects a field such as `retryPolicy`, the MCP reports `SCHEMA_VALIDATION_FAILED` with the rejected member so the AI can correct the candidate flow instead of guessing.
 
 ## Development
 
@@ -139,15 +147,29 @@ npm run build
 npm run pack:dry-run
 ```
 
-For a local clone:
+For a local clone, prefer registering Codex against the built server from this checkout:
 
 ```powershell
 npm run build
-codex mcp add power-automate-local -- node C:\path\to\mcp-power-automate\dist\server\index.js
-node C:\path\to\mcp-power-automate\dist\server\index.js extension-path
+$nodePath = (Get-Command node).Source
+$serverPath = Join-Path (Get-Location) "dist/server/index.js"
+codex mcp add power-automate-local -- $nodePath $serverPath
 ```
 
-Runtime state lives in `data/` and must not be committed.
+If an older local entry exists, remove it first:
+
+```powershell
+codex mcp remove power-automate-local
+```
+
+Load the browser extension from `dist/extension` after rebuilding. Runtime state lives in `data/` and must not be committed.
+
+## Docs
+
+- [Launch kit](docs/launch-kit.md)
+- [Multi-provider distribution](docs/multi-provider-distribution.md)
+- [Publishing](PUBLISHING.md)
+- [Codex skill bundle](skills/power-automate-mcp/README.md)
 
 ## Package Links
 
@@ -157,4 +179,4 @@ Runtime state lives in `data/` and must not be committed.
 
 ## License
 
-MIT. See [`LICENSE`](LICENSE).
+MIT. See [LICENSE](LICENSE).

@@ -3,7 +3,7 @@
   "version": "1.0.0",
   "private": false,
   "type": "module",
-  "description": "Local MCP server and Chromium extension for AI-operated Microsoft Power Automate flows with automatic browser-backed context, validation, review diff, and rollback.",
+  "description": "Local-first MCP server and Chromium extension for AI-assisted Microsoft Power Automate flows with browser-backed auth, validation, review diff, and rollback.",
   "mcpName": "io.github.kaael1/mcp-power-automate",
   "bin": {
     "mcp-power-automate": "dist/server/index.js"
