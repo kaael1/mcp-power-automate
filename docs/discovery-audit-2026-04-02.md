@@ -60,3 +60,17 @@ This file captures the observed public discovery status of `kaael1/mcp-power-aut
 - direct GitHub-to-skill installs start happening consistently
 - searches for `Power Automate MCP` and related phrases start returning owned surfaces worth clicking
 - repo social proof begins to move through stars, watchers, and external mentions
+
+## Growth update
+
+The next public push has started to move the project out of "very early social proof":
+
+- LinkedIn launch/post traffic has reached 15,000+ views.
+- GitHub has reached 14 stars.
+- The README is now the main conversion surface for a wider audience, not just a technical reference.
+
+Keep the README focused on three questions new visitors ask first:
+
+1. What does this let my agent do with Power Automate?
+2. Why is it safer than blind browser automation or one-off scripts?
+3. How do I install it and confirm the local browser-backed session is ready?

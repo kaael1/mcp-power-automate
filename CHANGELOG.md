@@ -3,6 +3,8 @@
 ## Unreleased
 
 - Added `add_flow_to_solution` and `create_flow_in_solution` for placing cloud flows into unmanaged Dataverse solutions.
+- Refreshed the README, launch kit, publishing notes, and skill README for the public growth push.
+- Replaced the SVG README banner with a bitmap cover asset aligned to the launch visual.
 
 ## 1.0.0
 
