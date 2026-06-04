@@ -124,6 +124,14 @@ The extension can capture Power Automate, Power Platform/BAP, and Dataverse-audi
 
 This means the MCP can work without a new Microsoft Entra app registration, but it also means the browser session remains the live authority. If a token expires or a permission is missing, reopen or focus the relevant Power Automate, Power Apps, or Dataverse page and retry after capture.
 
+### Troubleshooting token capture
+
+If the extension dashboard or `get_context` shows a connected browser session and an active flow, but `hasLegacyApi` remains `false`, deeper tools such as `list_flows`, `list_runs`, `validate_flow`, and `apply_flow_update` may report that no flow-compatible token is available.
+
+One known cause is Power Automate's New designer. If refreshing or focusing the flow page does not capture a compatible token, turn off the New designer toggle for that flow and reopen the flow in the classic designer. The classic designer can expose the legacy flow-service requests that the extension needs to capture for validation, run inspection, and save operations.
+
+After switching designers, refresh the flow page and run `doctor` or `get_context` again. The expected healthy state is a connected session with `hasLegacyApi: true`.
+
 ## HTTP Bridge
 
 The local bridge listens on `127.0.0.1:17373`.
