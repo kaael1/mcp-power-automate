@@ -27,7 +27,7 @@ const summarizeFlowForHistory = (normalizedFlow: NormalizedFlow) => {
   };
 };
 
-const isPlainObject = (value: unknown): value is Record<string, unknown> =>
+export const isPlainObject = (value: unknown): value is Record<string, unknown> =>
   Boolean(value) && typeof value === 'object' && !Array.isArray(value);
 
 const areEqual = (left: unknown, right: unknown) => JSON.stringify(left) === JSON.stringify(right);
@@ -300,6 +300,25 @@ export const createLastUpdateRecord = ({
       changedFlowBody: changedDefinition,
     },
   };
+};
+
+// A snapshot is only safe to build edits on when it was captured after the last update this bridge saved.
+// Unparseable timestamps count as stale because freshness cannot be proven.
+export const isSnapshotOlderThanLastUpdate = ({
+  lastUpdateCapturedAt,
+  snapshotCapturedAt,
+}: {
+  lastUpdateCapturedAt: string | null | undefined;
+  snapshotCapturedAt: string;
+}): boolean => {
+  if (!lastUpdateCapturedAt) return false;
+
+  const snapshotTime = Date.parse(snapshotCapturedAt);
+  const lastUpdateTime = Date.parse(lastUpdateCapturedAt);
+
+  if (Number.isNaN(snapshotTime) || Number.isNaN(lastUpdateTime)) return true;
+
+  return snapshotTime < lastUpdateTime;
 };
 
 export const withFailedAction = (

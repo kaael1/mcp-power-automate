@@ -5,6 +5,7 @@ import {
   createLastUpdateRecord,
   extractNameFromId,
   filterCatalogFlows,
+  isSnapshotOlderThanLastUpdate,
   mergeCatalogItems,
   withFailedAction,
 } from '../server/client-helpers.js';
@@ -131,5 +132,23 @@ describe('client helpers', () => {
       errorMessage: 'Boom',
       failedActionName: 'Compose',
     });
+  });
+
+  it('treats a snapshot as stale only when it predates the last recorded update', () => {
+    const snapshotCapturedAt = '2026-10-20T12:47:00.000Z';
+
+    expect(isSnapshotOlderThanLastUpdate({ lastUpdateCapturedAt: null, snapshotCapturedAt })).toBe(false);
+    expect(isSnapshotOlderThanLastUpdate({ lastUpdateCapturedAt: '2026-10-20T12:00:00.000Z', snapshotCapturedAt })).toBe(false);
+    expect(isSnapshotOlderThanLastUpdate({ lastUpdateCapturedAt: snapshotCapturedAt, snapshotCapturedAt })).toBe(false);
+    expect(isSnapshotOlderThanLastUpdate({ lastUpdateCapturedAt: '2026-10-20T13:12:00.000Z', snapshotCapturedAt })).toBe(true);
+  });
+
+  it('treats unparseable snapshot or update timestamps as stale', () => {
+    expect(
+      isSnapshotOlderThanLastUpdate({ lastUpdateCapturedAt: '2026-10-20T13:12:00.000Z', snapshotCapturedAt: 'not-a-date' }),
+    ).toBe(true);
+    expect(
+      isSnapshotOlderThanLastUpdate({ lastUpdateCapturedAt: 'not-a-date', snapshotCapturedAt: '2026-10-20T12:47:00.000Z' }),
+    ).toBe(true);
   });
 });

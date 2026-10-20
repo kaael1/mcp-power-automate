@@ -12,6 +12,7 @@ import {
   createLastUpdateRecord,
   extractNameFromId,
   filterCatalogFlows,
+  isSnapshotOlderThanLastUpdate,
   mergeCatalogItems,
   normalizeIssues,
   sleep,
@@ -21,6 +22,7 @@ import {
 import { getLatestCaptureDiagnostic, getLatestCaptureDiagnosticForFlow } from './capture-diagnostics-store.js';
 import { getCapturedSession, listCapturedSessions } from './captured-sessions-store.js';
 import { hasManageSolutionsTokens } from './dataverse-client.js';
+import { computeFlowBaseHash } from './flow-base-hash.js';
 import { getFlowCatalogForEnv, saveFlowCatalog } from './flow-catalog-store.js';
 import { getFlowSnapshot, getFlowSnapshotForFlow } from './flow-snapshot-store.js';
 import { getLastRun, getLastRunForFlow, saveLastRun } from './last-run-store.js';
@@ -706,23 +708,97 @@ export const getStatus = () => {
   };
 };
 
-const fetchCurrentNormalizedFlow = async (session: TargetSession) => {
+const fetchLiveNormalizedFlow = async (session: TargetSession) => {
   try {
     const flowResponse = await fetchRawFlowModern(session);
     return normalizeFlow(session, flowResponse);
   } catch {
-    try {
-      const legacyFlowResponse = await fetchRawFlowLegacy(session);
-      return normalizeLegacyFlow(session, legacyFlowResponse);
-    } catch (legacyError) {
-      const snapshot = getFlowSnapshotForFlow({ envId: session.envId, flowId: session.flowId }) || getFlowSnapshot();
+    const legacyFlowResponse = await fetchRawFlowLegacy(session);
+    return normalizeLegacyFlow(session, legacyFlowResponse);
+  }
+};
 
-      if (snapshot && snapshot.flowId === session.flowId && snapshot.envId === session.envId) {
-        return normalizeSnapshot(snapshot);
-      }
+interface FlowReadOrigin {
+  baseHash: string;
+  fromSnapshot: boolean;
+  snapshotCapturedAt: string | null;
+  warning?: string;
+}
 
-      throw legacyError;
+const createFlowBaseMismatchError = ({ currentBaseHash, expectedBaseHash }: { currentBaseHash: string; expectedBaseHash: string }) =>
+  new PowerAutomateError({
+    code: 'FLOW_BASE_MISMATCH',
+    details: { currentBaseHash, expectedBaseHash },
+    message:
+      'Nothing was saved: the current flow no longer matches the version this edit was built from (expectedBaseHash differs from the live flow). Saving would overwrite newer changes. Call get_flow again, rebuild the edit on that result, and pass its baseHash.',
+  });
+
+const assertExpectedBase = (before: NormalizedFlow, expectedBaseHash: string | undefined) => {
+  if (!expectedBaseHash) return;
+
+  const currentBaseHash = computeFlowBaseHash(before);
+
+  if (currentBaseHash !== expectedBaseHash) {
+    throw createFlowBaseMismatchError({ currentBaseHash, expectedBaseHash });
+  }
+};
+
+const describeError = (error: unknown) => ({
+  code: error instanceof PowerAutomateError ? error.code : null,
+  message: error instanceof Error ? error.message : String(error),
+});
+
+const createStaleSnapshotError = ({
+  lastUpdateCapturedAt,
+  liveReadError,
+  snapshotCapturedAt,
+}: {
+  lastUpdateCapturedAt: string;
+  liveReadError: unknown;
+  snapshotCapturedAt: string;
+}) =>
+  new PowerAutomateSessionError({
+    code: 'STALE_FLOW_SNAPSHOT',
+    details: {
+      lastUpdateCapturedAt,
+      liveReadError: describeError(liveReadError),
+      snapshotCapturedAt,
+    },
+    message: `The flow could not be read live, and the only browser snapshot (captured ${snapshotCapturedAt}) is older than the last update saved through this bridge (${lastUpdateCapturedAt}). Editing from it would revert that update. Reopen the flow page in Power Automate so the extension captures a fresh token, then retry.`,
+    retryable: true,
+  });
+
+// Live read first; fall back to the browser-captured snapshot only when it is at least as new as the last saved update.
+const fetchCurrentNormalizedFlow = async (session: TargetSession): Promise<{ flow: NormalizedFlow; origin: FlowReadOrigin }> => {
+  try {
+    const liveFlow = await fetchLiveNormalizedFlow(session);
+    return {
+      flow: liveFlow,
+      origin: { baseHash: computeFlowBaseHash(liveFlow), fromSnapshot: false, snapshotCapturedAt: null },
+    };
+  } catch (liveReadError) {
+    const snapshot = getFlowSnapshotForFlow({ envId: session.envId, flowId: session.flowId });
+
+    if (!snapshot) {
+      throw liveReadError;
     }
+
+    const lastUpdateCapturedAt = getLastUpdateForFlow(session)?.capturedAt || null;
+
+    if (lastUpdateCapturedAt && isSnapshotOlderThanLastUpdate({ lastUpdateCapturedAt, snapshotCapturedAt: snapshot.capturedAt })) {
+      throw createStaleSnapshotError({ lastUpdateCapturedAt, liveReadError, snapshotCapturedAt: snapshot.capturedAt });
+    }
+
+    const snapshotFlow = normalizeSnapshot(snapshot);
+    return {
+      flow: snapshotFlow,
+      origin: {
+        baseHash: computeFlowBaseHash(snapshotFlow),
+        fromSnapshot: true,
+        snapshotCapturedAt: snapshot.capturedAt,
+        warning: `This is a browser snapshot captured ${snapshot.capturedAt}, not a live read. It may miss changes made since then; apply_flow_update requires a live read and will not save until the flow page is reopened.`,
+      },
+    };
   }
 };
 
@@ -744,9 +820,10 @@ const buildProposedFlow = ({
   },
 });
 
-export const getCurrentFlow = async ({ target }: { target?: TargetRef } = {}) => {
+export const getCurrentFlow = async ({ target }: { target?: TargetRef } = {}): Promise<NormalizedFlow & FlowReadOrigin> => {
   const session = ensureTargetSession(target);
-  return fetchCurrentNormalizedFlow(session);
+  const { flow, origin } = await fetchCurrentNormalizedFlow(session);
+  return { ...flow, ...origin };
 };
 
 export const refreshFlows = async () => {
@@ -1043,12 +1120,14 @@ const persistLastUpdate = async ({ after, before }: { after: NormalizedFlow; bef
   return lastUpdate;
 };
 
-export const previewFlowUpdate = async ({ displayName, flow, target }: UpdateFlowInput) => {
+export const previewFlowUpdate = async ({ displayName, expectedBaseHash, flow, target }: UpdateFlowInput) => {
   const session = ensureTargetSession(target);
-  const before = await fetchCurrentNormalizedFlow(session);
+  const { flow: before, origin } = await fetchCurrentNormalizedFlow(session);
+  assertExpectedBase(before, expectedBaseHash);
   const after = buildProposedFlow({ before, displayName, flow });
 
   return {
+    ...origin,
     lastUpdate: createLastUpdateRecord({ after, before }),
     target: {
       displayName: session.targetDisplayName,
@@ -1130,8 +1209,30 @@ const updateCurrentFlowLegacy = async (session: TargetSession, { displayName, fl
   };
 };
 
-export const applyFlowUpdate = async ({ displayName, flow, target }: UpdateFlowInput) => {
+const createLiveReadUnavailableError = ({ liveReadError, session }: { liveReadError: unknown; session: TargetSession }) =>
+  new PowerAutomateSessionError({
+    code: 'LIVE_READ_UNAVAILABLE',
+    details: {
+      latestCaptureDiagnostic: getLatestCaptureDiagnosticForTarget(session),
+      liveReadError: describeError(liveReadError),
+      snapshotCapturedAt: getFlowSnapshotForFlow(session)?.capturedAt || null,
+    },
+    message:
+      'Nothing was saved: apply_flow_update needs a live read of the current flow to diff against, and none is possible right now. Browser snapshots are never used as the basis for a save. Reopen the flow page in Power Automate so the extension captures a fresh token, then call get_flow again before retrying.',
+    retryable: true,
+  });
+
+export const applyFlowUpdate = async ({ displayName, expectedBaseHash, flow, target }: UpdateFlowInput) => {
   const session = ensureTargetSession(target);
+  let liveFlow: NormalizedFlow;
+
+  try {
+    liveFlow = await fetchLiveNormalizedFlow(session);
+  } catch (liveReadError) {
+    throw createLiveReadUnavailableError({ liveReadError, session });
+  }
+
+  assertExpectedBase(liveFlow, expectedBaseHash);
 
   try {
     return await updateCurrentFlowModern(session, { displayName, flow });
@@ -1524,14 +1625,28 @@ export const revertLastUpdate = async ({ target }: { target?: TargetRef } = {}) 
     });
   }
 
-  return applyFlowUpdate({
-    displayName: lastUpdate.before.displayName,
-    flow: lastUpdate.before.flow,
-    target: {
-      envId: session.envId,
-      flowId: session.flowId,
-    },
-  });
+  // Only revert from the state the bridge saved; otherwise the revert would discard edits made after the last update.
+  try {
+    return await applyFlowUpdate({
+      displayName: lastUpdate.before.displayName,
+      expectedBaseHash: computeFlowBaseHash(lastUpdate.after),
+      flow: lastUpdate.before.flow,
+      target: {
+        envId: session.envId,
+        flowId: session.flowId,
+      },
+    });
+  } catch (error) {
+    if (error instanceof PowerAutomateError && error.code === 'FLOW_BASE_MISMATCH') {
+      throw new PowerAutomateError({
+        code: 'FLOW_BASE_MISMATCH',
+        details: { ...(error.details as Record<string, unknown>), lastUpdateCapturedAt: lastUpdate.capturedAt },
+        message: `Nothing was reverted: the flow has changed since the last update saved through this bridge (${lastUpdate.capturedAt}), so reverting would discard those later changes. Inspect the current flow with get_flow and make any rollback as a normal reviewed edit.`,
+      });
+    }
+
+    throw error;
+  }
 };
 
 const normalizeRun = (session: TargetSession, run: AnyRecord): RunSummary => {

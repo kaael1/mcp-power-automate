@@ -86,6 +86,7 @@ export const activeTargetSchema = z.object({
 
 export const updateFlowInputSchema = z.object({
   displayName: z.string().trim().min(1).optional(),
+  expectedBaseHash: z.string().trim().min(1, 'expectedBaseHash must not be blank').optional(),
   flow: flowContentSchema,
   target: targetRefSchema.optional(),
 });

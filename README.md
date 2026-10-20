@@ -111,9 +111,12 @@ clone_flow
 
 - Inspect with `get_context`, `connect_flow`, and `get_flow` before any write.
 - Preview with `preview_flow_update` before saving.
+- `get_flow` and `preview_flow_update` fall back to a browser-captured snapshot only when no live read is possible. Such results carry `fromSnapshot: true` and `snapshotCapturedAt`, and they are refused with `STALE_FLOW_SNAPSHOT` when the snapshot predates the last update saved through the bridge.
+- `apply_flow_update` never saves from a snapshot. Without a live read it returns `LIVE_READ_UNAVAILABLE` and saves nothing; reopen the flow page and retry.
+- `get_flow` and `preview_flow_update` return a `baseHash` of the flow's display name and body. Pass it as `expectedBaseHash` to `apply_flow_update` (and optionally `preview_flow_update`); if the live flow no longer matches (including a rename), the call fails with `FLOW_BASE_MISMATCH` and nothing is saved. A hash from a snapshot that lacks the display name won't match a live read; re-read once the flow page is open.
 - Validate before and after meaningful edits when Power Automate accepts validation.
 - Review `get_last_update` after save so the diff is visible.
-- Use `revert_last_update` when the saved result is wrong.
+- Use `revert_last_update` when the saved result is wrong. It only reverts while the flow still matches what the last update saved, and otherwise fails with `FLOW_BASE_MISMATCH` instead of discarding later edits.
 - Prefer test or staging flows before production flows.
 
 If Power Automate rejects a save because of a connection permission problem, the MCP reports `CONNECTION_AUTHORIZATION_FAILED` and waits for the user to fix that connection in Power Automate. If the service rejects a field such as `retryPolicy`, the MCP reports `SCHEMA_VALIDATION_FAILED` with the rejected member so the agent can correct the candidate flow instead of guessing.

@@ -16,12 +16,12 @@ Provider notes live in [references/providers.md](references/providers.md).
 1. Start with `doctor` or `get_context`.
 2. Use `connect_flow` when the target is not already explicit.
 3. Prefer browser-captured flows, explicit `flowId`, or a narrow `nameQuery`; if `connect_flow` returns candidates, choose by `flowId` or ask the user which flow is intended.
-4. Call `get_flow` before edits.
+4. Call `get_flow` before edits. If the result has `fromSnapshot: true`, it is a browser snapshot (see `snapshotCapturedAt` and `warning`), not a live read; tell the user and have them reopen the flow page before building a save on it.
 5. Call `preview_flow_update` before saving.
 6. Call `validate_flow` before and after save when available.
-7. Call `apply_flow_update` only for the smallest intended change.
+7. Call `apply_flow_update` only for the smallest intended change, passing `expectedBaseHash` set to the `baseHash` from the `get_flow` result the edit was built on.
 8. Call `get_last_update` after save and summarize the review diff.
-9. Use `revert_last_update` if the saved result is wrong.
+9. Use `revert_last_update` if the saved result is wrong. It refuses with `FLOW_BASE_MISMATCH` if the flow changed after that update; then inspect with `get_flow` and roll back as a normal reviewed edit.
 10. Prefer test or staging flows before production flows.
 
 ## Recommended Workflows
@@ -53,9 +53,9 @@ Use solution write tools only for unmanaged solutions and only when adding cloud
 2. `connect_flow`
 3. `get_flow`
 4. Build the smallest candidate flow change.
-5. `preview_flow_update`
+5. `preview_flow_update` with `expectedBaseHash` from step 3
 6. `validate_flow`
-7. `apply_flow_update`
+7. `apply_flow_update` with the same `expectedBaseHash`
 8. `get_last_update`
 9. `validate_flow` again when available
 
@@ -105,6 +105,9 @@ Use only when the trigger is manual/request based and the payload is safe.
 - `DATAVERSE_TOKEN_MISSING`: solution inspection needs a token for the Dataverse org. Open the Dataverse org or a model-driven app in that environment with the extension enabled.
 - `SCHEMA_VALIDATION_FAILED`: fix the candidate flow JSON. If details include a rejected member such as `retryPolicy`, remove or relocate that field intentionally.
 - `CONNECTION_AUTHORIZATION_FAILED`: stop retrying saves. The user must fix the named connector or connection permissions in Power Automate.
+- `STALE_FLOW_SNAPSHOT`: no live read was possible and the only browser snapshot is older than the last update saved through the bridge. Do not edit from it; ask the user to reopen the flow page, then call `get_flow` again.
+- `LIVE_READ_UNAVAILABLE`: `apply_flow_update` saved nothing because it could not read the current flow live. Ask the user to reopen the flow page, call `get_flow` again, rebuild the change on the live result, then retry.
+- `FLOW_BASE_MISMATCH`: the live flow (body or display name) changed since the `get_flow` read the edit was built on, so nothing was saved. Do not retry the same payload. Call `get_flow` again, rebuild the change on the new result, and pass its `baseHash`.
 - `FLOW_NOT_FOUND`: call `list_flows` and `connect_flow`; browser-captured flows may still be usable even when the live catalog is stale.
 - Bridge port already in use: stop the existing bridge process or restart this MCP with a different `POWER_AUTOMATE_BRIDGE_PORT`. Do not assume an unknown local process is safe to reuse.
 
