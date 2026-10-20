@@ -2,8 +2,15 @@ import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 
 import { describe, expect, it } from 'vitest';
+import { z, type ZodRawShape, type ZodTypeAny } from 'zod';
 
-import { publicCommandNames } from '../server/command-registry.js';
+import {
+  commandDefinitions,
+  executeCommand,
+  getCommandDefinition,
+  getCommandInputShape,
+  publicCommandNames,
+} from '../server/command-registry.js';
 
 const expectedV1Commands = [
   'get_context',
@@ -69,4 +76,34 @@ describe('command registry', () => {
       expect(docs).not.toContain(`\`${alias}\``);
     }
   });
+
+  it('exposes connect_flow arguments to MCP clients despite its refine() validation', () => {
+    const definition = getCommandDefinition('connect_flow');
+
+    expect(definition).toBeDefined();
+    expect(Object.keys(getCommandInputShape(definition!)).sort()).toEqual(['envId', 'flowId', 'nameQuery', 'tabId']);
+  });
+
+  it('does not let MCP schema registration strip arguments a command accepts', () => {
+    for (const definition of commandDefinitions) {
+      const mcpSchema = z.object(getCommandInputShape(definition));
+      const accepted = Object.keys(getObjectShape(definition.inputSchema));
+
+      expect(Object.keys(mcpSchema.shape).sort(), definition.name).toEqual(accepted.sort());
+    }
+  });
+
+  it('still enforces connect_flow refine() validation when executing', async () => {
+    await expect(executeCommand('connect_flow', {}, { local: true })).rejects.toThrow('Provide flowId, nameQuery, or tabId.');
+  });
 });
+
+const getObjectShape = (schema: ZodTypeAny): ZodRawShape => {
+  let current = schema;
+
+  while (current instanceof z.ZodEffects) {
+    current = current.innerType();
+  }
+
+  return current instanceof z.ZodObject ? (current.shape as ZodRawShape) : {};
+};

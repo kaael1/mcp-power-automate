@@ -339,7 +339,15 @@ export const executeCommand = async (name: string, input: unknown = {}, options:
   return definition.handler(parsed);
 };
 
-export const getCommandInputShape = (definition: CommandDefinition) => {
-  const schema = definition.inputSchema;
+// MCP tools are registered with a raw object shape, so unwrap refine()/superRefine()
+// effects to reach it. executeCommand still parses with the full schema, so the
+// refinements are enforced at call time.
+export const getCommandInputShape = (definition: CommandDefinition): ZodRawShape => {
+  let schema: ZodTypeAny = definition.inputSchema;
+
+  while (schema instanceof z.ZodEffects) {
+    schema = schema.innerType();
+  }
+
   return schema instanceof z.ZodObject ? (schema.shape as ZodRawShape) : {};
 };
